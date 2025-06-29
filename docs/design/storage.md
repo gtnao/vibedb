@@ -41,9 +41,22 @@ anyhow::Resultを使用した統一的なエラーハンドリング：
 - バッファサイズ不正
 - 存在しないページへのアクセス
 
+## ページタイプ
+
+### HeapPage
+タプルデータを格納するページタイプ。PostgreSQLスタイルのレイアウトを採用：
+- ヘッダー（20バイト）: page_id, lower, upper, special
+- スロット配列: ヘッダー直後から下向きに成長
+- タプルデータ: ページ末尾から上向きに成長
+- 空き領域: `upper - lower`で管理
+
+詳細は[Buffer Pool Design](buffer_pool.md#heappage構造)を参照。
+
 ## 将来の拡張性
 
-1. **BufferPoolManager**: メモリ上でのページキャッシュ
+1. **BufferPoolManager**: メモリ上でのページキャッシュ ✅ 実装済み
 2. **WAL (Write-Ahead Logging)**: トランザクションログ
 3. **複数ファイル対応**: テーブルスペースの概念
 4. **並行アクセス**: 読み込みの並列化
+5. **インデックスページ**: B+木などのインデックス構造
+6. **FSMページ**: Free Space Map for efficient space management

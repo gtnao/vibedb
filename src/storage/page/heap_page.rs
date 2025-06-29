@@ -2,11 +2,12 @@ use crate::storage::PAGE_SIZE;
 use crate::storage::page::{Page, PageId};
 use anyhow::{Result, bail};
 
-// Header structure (16 bytes)
-const HEADER_SIZE: usize = 16;
+// Header structure (20 bytes) - PostgreSQL style
+const HEADER_SIZE: usize = 20;
 const PAGE_ID_OFFSET: usize = 0;
-const FREE_SPACE_POINTER_OFFSET: usize = 12;
-const TUPLE_COUNT_OFFSET: usize = 14;
+const LOWER_OFFSET: usize = 12; // End of slot array (grows down)
+const UPPER_OFFSET: usize = 14; // Start of tuple data (grows up)
+const SPECIAL_OFFSET: usize = 16; // For future extensions
 
 // Slot size (4 bytes: 2 for offset, 2 for length)
 const SLOT_SIZE: usize = 4;
@@ -21,13 +22,16 @@ impl<'a> HeapPage<'a> {
         let page_id_bytes = page_id.0.to_le_bytes();
         data[PAGE_ID_OFFSET..PAGE_ID_OFFSET + 4].copy_from_slice(&page_id_bytes);
 
-        // Set initial free space pointer (right after header)
-        let free_space_pointer = HEADER_SIZE as u16;
-        data[FREE_SPACE_POINTER_OFFSET..FREE_SPACE_POINTER_OFFSET + 2]
-            .copy_from_slice(&free_space_pointer.to_le_bytes());
+        // Set initial lower (slot array end - starts right after header)
+        let lower = HEADER_SIZE as u16;
+        data[LOWER_OFFSET..LOWER_OFFSET + 2].copy_from_slice(&lower.to_le_bytes());
 
-        // Initialize tuple count to 0
-        data[TUPLE_COUNT_OFFSET..TUPLE_COUNT_OFFSET + 2].copy_from_slice(&0u16.to_le_bytes());
+        // Set initial upper (tuple data start - starts at page end)
+        let upper = PAGE_SIZE as u16;
+        data[UPPER_OFFSET..UPPER_OFFSET + 2].copy_from_slice(&upper.to_le_bytes());
+
+        // Initialize special area to 0
+        data[SPECIAL_OFFSET..SPECIAL_OFFSET + 4].fill(0);
 
         Self { data }
     }
@@ -42,34 +46,30 @@ impl<'a> HeapPage<'a> {
             bail!("Tuple size too large");
         }
 
+        let lower = self.get_lower();
+        let upper = self.get_upper();
         let tuple_count = self.get_tuple_count();
-        let free_space_pointer = self.get_free_space_pointer();
-        let slot_array_end = PAGE_SIZE - (tuple_count as usize * SLOT_SIZE);
 
         // Check if we have enough space
         let required_space = tuple_size + SLOT_SIZE;
-        let available_space = slot_array_end - free_space_pointer as usize;
+        let available_space = (upper - lower) as usize;
         if available_space < required_space {
             bail!("Not enough space in page");
         }
 
-        // Write tuple data
-        let tuple_offset = free_space_pointer;
-        self.data[tuple_offset as usize..tuple_offset as usize + tuple_size]
-            .copy_from_slice(tuple_data);
+        // Write tuple data (from upper, growing up)
+        let new_upper = upper - tuple_size as u16;
+        self.data[new_upper as usize..upper as usize].copy_from_slice(tuple_data);
 
-        // Update free space pointer
-        let new_free_space_pointer = tuple_offset + tuple_size as u16;
-        self.set_free_space_pointer(new_free_space_pointer);
-
-        // Add slot entry
-        let slot_offset = PAGE_SIZE - ((tuple_count + 1) as usize * SLOT_SIZE);
-        self.data[slot_offset..slot_offset + 2].copy_from_slice(&tuple_offset.to_le_bytes());
+        // Add slot entry (at lower, growing down)
+        let slot_offset = lower as usize;
+        self.data[slot_offset..slot_offset + 2].copy_from_slice(&new_upper.to_le_bytes());
         self.data[slot_offset + 2..slot_offset + 4]
             .copy_from_slice(&(tuple_size as u16).to_le_bytes());
 
-        // Update tuple count
-        self.set_tuple_count(tuple_count + 1);
+        // Update lower and upper
+        self.set_lower(lower + SLOT_SIZE as u16);
+        self.set_upper(new_upper);
 
         Ok(tuple_count)
     }
@@ -80,7 +80,8 @@ impl<'a> HeapPage<'a> {
             bail!("Invalid slot id");
         }
 
-        let slot_offset = PAGE_SIZE - ((slot_id + 1) as usize * SLOT_SIZE);
+        // Slots are now at the beginning, after header
+        let slot_offset = HEADER_SIZE + (slot_id as usize * SLOT_SIZE);
         let tuple_offset = u16::from_le_bytes([self.data[slot_offset], self.data[slot_offset + 1]]);
         let tuple_length =
             u16::from_le_bytes([self.data[slot_offset + 2], self.data[slot_offset + 3]]);
@@ -99,7 +100,7 @@ impl<'a> HeapPage<'a> {
         }
 
         // Mark slot as deleted (offset = 0, length = 0)
-        let slot_offset = PAGE_SIZE - ((slot_id + 1) as usize * SLOT_SIZE);
+        let slot_offset = HEADER_SIZE + (slot_id as usize * SLOT_SIZE);
         self.data[slot_offset..slot_offset + 4].fill(0);
 
         Ok(())
@@ -115,35 +116,32 @@ impl<'a> HeapPage<'a> {
         PageId(u32::from_le_bytes(bytes))
     }
 
-    fn get_free_space_pointer(&self) -> u16 {
-        u16::from_le_bytes([
-            self.data[FREE_SPACE_POINTER_OFFSET],
-            self.data[FREE_SPACE_POINTER_OFFSET + 1],
-        ])
+    fn get_lower(&self) -> u16 {
+        u16::from_le_bytes([self.data[LOWER_OFFSET], self.data[LOWER_OFFSET + 1]])
     }
 
-    fn set_free_space_pointer(&mut self, pointer: u16) {
-        self.data[FREE_SPACE_POINTER_OFFSET..FREE_SPACE_POINTER_OFFSET + 2]
-            .copy_from_slice(&pointer.to_le_bytes());
+    fn set_lower(&mut self, lower: u16) {
+        self.data[LOWER_OFFSET..LOWER_OFFSET + 2].copy_from_slice(&lower.to_le_bytes());
+    }
+
+    fn get_upper(&self) -> u16 {
+        u16::from_le_bytes([self.data[UPPER_OFFSET], self.data[UPPER_OFFSET + 1]])
+    }
+
+    fn set_upper(&mut self, upper: u16) {
+        self.data[UPPER_OFFSET..UPPER_OFFSET + 2].copy_from_slice(&upper.to_le_bytes());
     }
 
     fn get_tuple_count(&self) -> u16 {
-        u16::from_le_bytes([
-            self.data[TUPLE_COUNT_OFFSET],
-            self.data[TUPLE_COUNT_OFFSET + 1],
-        ])
-    }
-
-    fn set_tuple_count(&mut self, count: u16) {
-        self.data[TUPLE_COUNT_OFFSET..TUPLE_COUNT_OFFSET + 2].copy_from_slice(&count.to_le_bytes());
+        let lower = self.get_lower();
+        (lower - HEADER_SIZE as u16) / SLOT_SIZE as u16
     }
 
     pub fn get_free_space(&self) -> usize {
-        let free_space_pointer = self.get_free_space_pointer();
-        let tuple_count = self.get_tuple_count();
-        let slot_array_end = PAGE_SIZE - (tuple_count as usize * SLOT_SIZE);
+        let lower = self.get_lower();
+        let upper = self.get_upper();
 
-        slot_array_end.saturating_sub(free_space_pointer as usize)
+        upper.saturating_sub(lower) as usize
     }
 }
 
@@ -173,7 +171,8 @@ mod tests {
 
         assert_eq!(page.page_id(), page_id);
         assert_eq!(page.get_tuple_count(), 0);
-        assert_eq!(page.get_free_space_pointer(), HEADER_SIZE as u16);
+        assert_eq!(page.get_lower(), HEADER_SIZE as u16);
+        assert_eq!(page.get_upper(), PAGE_SIZE as u16);
         assert_eq!(page.get_free_space(), PAGE_SIZE - HEADER_SIZE);
     }
 
