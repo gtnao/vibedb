@@ -1,4 +1,4 @@
-use crate::access::TableHeap;
+use crate::access::{DataType, TableHeap};
 use crate::storage::buffer::BufferPoolManager;
 use crate::storage::page::PageId;
 use anyhow::{Result, bail};
@@ -10,6 +10,9 @@ pub type TableId = u32;
 pub const CATALOG_TABLE_ID: TableId = 1;
 pub const CATALOG_FIRST_PAGE: PageId = PageId(0);
 pub const CATALOG_TABLE_NAME: &str = "pg_tables";
+
+pub const CATALOG_ATTR_TABLE_ID: TableId = 2;
+pub const CATALOG_ATTR_TABLE_NAME: &str = "pg_attribute";
 
 #[derive(Debug, Clone)]
 pub struct TableInfo {
@@ -76,10 +79,102 @@ impl TableInfo {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct ColumnInfo {
+    pub column_name: String,
+    pub column_type: DataType,
+    pub column_order: u32,
+}
+
+impl ColumnInfo {
+    fn serialize(&self) -> Vec<u8> {
+        let mut data = Vec::new();
+        data.extend_from_slice(&(self.column_name.len() as u32).to_le_bytes());
+        data.extend_from_slice(self.column_name.as_bytes());
+        data.push(self.column_type as u8);
+        data.extend_from_slice(&self.column_order.to_le_bytes());
+        data
+    }
+
+    fn deserialize(data: &[u8]) -> Result<Self> {
+        if data.len() < 9 {
+            bail!("Invalid column info data: too short");
+        }
+
+        let mut offset = 0;
+
+        // Read column_name length
+        let name_len = u32::from_le_bytes([
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+        ]) as usize;
+        offset += 4;
+
+        // Read column_name
+        if data.len() < offset + name_len + 5 {
+            bail!("Invalid column info data: name too long");
+        }
+        let column_name = String::from_utf8(data[offset..offset + name_len].to_vec())?;
+        offset += name_len;
+
+        // Read column_type
+        let column_type = DataType::from_u8(data[offset])?;
+        offset += 1;
+
+        // Read column_order
+        let column_order = u32::from_le_bytes([
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+        ]);
+
+        Ok(ColumnInfo {
+            column_name,
+            column_type,
+            column_order,
+        })
+    }
+}
+
+/// Represents a pg_attribute row
+struct AttributeRow {
+    table_id: TableId,
+    column_info: ColumnInfo,
+}
+
+impl AttributeRow {
+    fn serialize(&self) -> Vec<u8> {
+        let mut data = Vec::new();
+        data.extend_from_slice(&self.table_id.to_le_bytes());
+        data.extend_from_slice(&self.column_info.serialize());
+        data
+    }
+
+    fn deserialize(data: &[u8]) -> Result<Self> {
+        if data.len() < 4 {
+            bail!("Invalid attribute row data: too short");
+        }
+
+        let table_id = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+
+        let column_info = ColumnInfo::deserialize(&data[4..])?;
+
+        Ok(AttributeRow {
+            table_id,
+            column_info,
+        })
+    }
+}
+
 pub struct Catalog {
     buffer_pool: BufferPoolManager,
     catalog_heap: TableHeap,
+    attribute_heap: Option<TableHeap>,
     table_cache: RwLock<HashMap<String, TableInfo>>,
+    column_cache: RwLock<HashMap<TableId, Vec<ColumnInfo>>>,
     next_table_id: RwLock<TableId>,
 }
 
@@ -109,15 +204,106 @@ impl Catalog {
         drop(guard); // Release the page guard before inserting
         catalog_heap.insert(&catalog_info.serialize())?;
 
-        // Initialize cache with catalog table
-        let mut initial_cache = HashMap::new();
-        initial_cache.insert(CATALOG_TABLE_NAME.to_string(), catalog_info);
+        // Create pg_attribute table
+        let (attr_page_id, mut attr_guard) = buffer_pool.new_page()?;
+        let _attr_heap_page = crate::storage::page::HeapPage::new(&mut attr_guard, attr_page_id);
+        drop(attr_guard);
+
+        let attr_table_info = TableInfo {
+            table_id: CATALOG_ATTR_TABLE_ID,
+            table_name: CATALOG_ATTR_TABLE_NAME.to_string(),
+            first_page_id: attr_page_id,
+        };
+        catalog_heap.insert(&attr_table_info.serialize())?;
+
+        let mut attribute_heap =
+            TableHeap::with_first_page(buffer_pool.clone(), CATALOG_ATTR_TABLE_ID, attr_page_id);
+
+        // Insert system table schemas
+        // pg_tables columns
+        let pg_tables_columns = vec![
+            AttributeRow {
+                table_id: CATALOG_TABLE_ID,
+                column_info: ColumnInfo {
+                    column_name: "table_id".to_string(),
+                    column_type: DataType::Int32,
+                    column_order: 1,
+                },
+            },
+            AttributeRow {
+                table_id: CATALOG_TABLE_ID,
+                column_info: ColumnInfo {
+                    column_name: "table_name".to_string(),
+                    column_type: DataType::Varchar,
+                    column_order: 2,
+                },
+            },
+            AttributeRow {
+                table_id: CATALOG_TABLE_ID,
+                column_info: ColumnInfo {
+                    column_name: "first_page_id".to_string(),
+                    column_type: DataType::Int32,
+                    column_order: 3,
+                },
+            },
+        ];
+
+        for attr_row in pg_tables_columns {
+            attribute_heap.insert(&attr_row.serialize())?;
+        }
+
+        // pg_attribute columns
+        let pg_attribute_columns = vec![
+            AttributeRow {
+                table_id: CATALOG_ATTR_TABLE_ID,
+                column_info: ColumnInfo {
+                    column_name: "table_id".to_string(),
+                    column_type: DataType::Int32,
+                    column_order: 1,
+                },
+            },
+            AttributeRow {
+                table_id: CATALOG_ATTR_TABLE_ID,
+                column_info: ColumnInfo {
+                    column_name: "column_name".to_string(),
+                    column_type: DataType::Varchar,
+                    column_order: 2,
+                },
+            },
+            AttributeRow {
+                table_id: CATALOG_ATTR_TABLE_ID,
+                column_info: ColumnInfo {
+                    column_name: "column_type".to_string(),
+                    column_type: DataType::Int32,
+                    column_order: 3,
+                },
+            },
+            AttributeRow {
+                table_id: CATALOG_ATTR_TABLE_ID,
+                column_info: ColumnInfo {
+                    column_name: "column_order".to_string(),
+                    column_type: DataType::Int32,
+                    column_order: 4,
+                },
+            },
+        ];
+
+        for attr_row in pg_attribute_columns {
+            attribute_heap.insert(&attr_row.serialize())?;
+        }
+
+        // Initialize caches
+        let mut initial_table_cache = HashMap::new();
+        initial_table_cache.insert(CATALOG_TABLE_NAME.to_string(), catalog_info);
+        initial_table_cache.insert(CATALOG_ATTR_TABLE_NAME.to_string(), attr_table_info);
 
         Ok(Self {
             buffer_pool,
             catalog_heap,
-            table_cache: RwLock::new(initial_cache),
-            next_table_id: RwLock::new(CATALOG_TABLE_ID + 1),
+            attribute_heap: Some(attribute_heap),
+            table_cache: RwLock::new(initial_table_cache),
+            column_cache: RwLock::new(HashMap::new()),
+            next_table_id: RwLock::new(CATALOG_ATTR_TABLE_ID + 1),
         })
     }
 
@@ -171,10 +357,22 @@ impl Catalog {
             }
         }
 
+        // Find pg_attribute table
+        let attr_table_info = table_cache.get(CATALOG_ATTR_TABLE_NAME).cloned();
+        let attribute_heap = attr_table_info.map(|info| {
+            TableHeap::with_first_page(
+                buffer_pool.clone(),
+                CATALOG_ATTR_TABLE_ID,
+                info.first_page_id,
+            )
+        });
+
         Ok(Self {
             buffer_pool,
             catalog_heap,
+            attribute_heap,
             table_cache: RwLock::new(table_cache),
+            column_cache: RwLock::new(HashMap::new()),
             next_table_id: RwLock::new(max_table_id + 1),
         })
     }
@@ -273,6 +471,104 @@ impl Catalog {
         Ok(table_info)
     }
 
+    /// Create a table with columns
+    pub fn create_table_with_columns(
+        &mut self,
+        name: &str,
+        columns: Vec<(&str, DataType)>,
+    ) -> Result<TableInfo> {
+        // Create the table first
+        let table_info = self.create_table(name)?;
+
+        // Insert column definitions if we have pg_attribute
+        if let Some(ref mut attr_heap) = self.attribute_heap {
+            for (order, (col_name, col_type)) in columns.into_iter().enumerate() {
+                let attr_row = AttributeRow {
+                    table_id: table_info.table_id,
+                    column_info: ColumnInfo {
+                        column_name: col_name.to_string(),
+                        column_type: col_type,
+                        column_order: (order + 1) as u32,
+                    },
+                };
+                attr_heap.insert(&attr_row.serialize())?;
+            }
+        }
+
+        Ok(table_info)
+    }
+
+    /// Get columns for a table
+    pub fn get_table_columns(&self, table_id: TableId) -> Result<Vec<ColumnInfo>> {
+        // Check cache first
+        {
+            let cache = self.column_cache.read().unwrap();
+            if let Some(columns) = cache.get(&table_id) {
+                return Ok(columns.clone());
+            }
+        }
+
+        // If no pg_attribute table, return empty
+        let _attr_heap = match &self.attribute_heap {
+            Some(heap) => heap,
+            None => return Ok(vec![]),
+        };
+
+        let mut columns = Vec::new();
+
+        // Scan pg_attribute for this table's columns
+        let attr_table_info = self
+            .get_table(CATALOG_ATTR_TABLE_NAME)?
+            .ok_or_else(|| anyhow::anyhow!("pg_attribute table not found"))?;
+
+        let mut current_page_id = Some(attr_table_info.first_page_id);
+
+        while let Some(page_id) = current_page_id {
+            match self.buffer_pool.fetch_page(page_id) {
+                Ok(guard) => {
+                    let page_data = unsafe {
+                        std::slice::from_raw_parts_mut(
+                            guard.as_ptr() as *mut u8,
+                            crate::storage::PAGE_SIZE,
+                        )
+                    };
+                    let page_array = unsafe {
+                        &mut *(page_data.as_mut_ptr() as *mut [u8; crate::storage::PAGE_SIZE])
+                    };
+                    let heap_page = crate::storage::page::HeapPage::from_data(page_array);
+
+                    let tuple_count = heap_page.get_tuple_count();
+                    for slot_id in 0..tuple_count {
+                        match heap_page.get_tuple(slot_id) {
+                            Ok(data) => {
+                                if let Ok(attr_row) = AttributeRow::deserialize(data) {
+                                    if attr_row.table_id == table_id {
+                                        columns.push(attr_row.column_info);
+                                    }
+                                }
+                            }
+                            Err(_) => continue,
+                        }
+                    }
+
+                    current_page_id = heap_page.get_next_page_id();
+                }
+                Err(_) => break,
+            }
+        }
+
+        // Sort by column order
+        columns.sort_by_key(|c| c.column_order);
+
+        // Update cache
+        {
+            let mut cache = self.column_cache.write().unwrap();
+            cache.insert(table_id, columns.clone());
+        }
+
+        Ok(columns)
+    }
+
     /// List all tables
     pub fn list_tables(&self) -> Result<Vec<TableInfo>> {
         let cache = self.table_cache.read().unwrap();
@@ -367,19 +663,24 @@ mod tests {
     fn test_list_tables() -> Result<()> {
         let mut catalog = create_test_catalog()?;
 
-        // Initially only catalog table exists
+        // Initially catalog tables exist (pg_tables and pg_attribute)
         let tables = catalog.list_tables()?;
-        assert_eq!(tables.len(), 1);
-        assert_eq!(tables[0].table_name, CATALOG_TABLE_NAME);
+        assert_eq!(tables.len(), 2);
+        assert!(tables.iter().any(|t| t.table_name == CATALOG_TABLE_NAME));
+        assert!(
+            tables
+                .iter()
+                .any(|t| t.table_name == CATALOG_ATTR_TABLE_NAME)
+        );
 
         // Create more tables
         catalog.create_table("users")?;
         catalog.create_table("products")?;
         catalog.create_table("orders")?;
 
-        // List should include all tables
+        // List should include all tables (2 system + 3 user)
         let tables = catalog.list_tables()?;
-        assert_eq!(tables.len(), 4);
+        assert_eq!(tables.len(), 5);
 
         let names: Vec<String> = tables.iter().map(|t| t.table_name.clone()).collect();
         assert!(names.contains(&CATALOG_TABLE_NAME.to_string()));
@@ -394,6 +695,61 @@ mod tests {
     fn test_catalog_persistence() -> Result<()> {
         // Skip persistence test for now - it's causing issues
         // TODO: Fix the persistence test properly
+        Ok(())
+    }
+
+    #[test]
+    fn test_create_table_with_columns() -> Result<()> {
+        let mut catalog = create_test_catalog()?;
+
+        // Create a table with columns
+        let columns = vec![
+            ("id", DataType::Int32),
+            ("name", DataType::Varchar),
+            ("active", DataType::Boolean),
+        ];
+
+        let table_info = catalog.create_table_with_columns("test_table", columns)?;
+        assert_eq!(table_info.table_name, "test_table");
+
+        // Verify columns were created
+        let retrieved_columns = catalog.get_table_columns(table_info.table_id)?;
+        assert_eq!(retrieved_columns.len(), 3);
+
+        assert_eq!(retrieved_columns[0].column_name, "id");
+        assert_eq!(retrieved_columns[0].column_type, DataType::Int32);
+        assert_eq!(retrieved_columns[0].column_order, 1);
+
+        assert_eq!(retrieved_columns[1].column_name, "name");
+        assert_eq!(retrieved_columns[1].column_type, DataType::Varchar);
+        assert_eq!(retrieved_columns[1].column_order, 2);
+
+        assert_eq!(retrieved_columns[2].column_name, "active");
+        assert_eq!(retrieved_columns[2].column_type, DataType::Boolean);
+        assert_eq!(retrieved_columns[2].column_order, 3);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_system_table_columns() -> Result<()> {
+        let catalog = create_test_catalog()?;
+
+        // Check pg_tables columns
+        let pg_tables_columns = catalog.get_table_columns(CATALOG_TABLE_ID)?;
+        assert_eq!(pg_tables_columns.len(), 3);
+        assert_eq!(pg_tables_columns[0].column_name, "table_id");
+        assert_eq!(pg_tables_columns[1].column_name, "table_name");
+        assert_eq!(pg_tables_columns[2].column_name, "first_page_id");
+
+        // Check pg_attribute columns
+        let pg_attr_columns = catalog.get_table_columns(CATALOG_ATTR_TABLE_ID)?;
+        assert_eq!(pg_attr_columns.len(), 4);
+        assert_eq!(pg_attr_columns[0].column_name, "table_id");
+        assert_eq!(pg_attr_columns[1].column_name, "column_name");
+        assert_eq!(pg_attr_columns[2].column_name, "column_type");
+        assert_eq!(pg_attr_columns[3].column_name, "column_order");
+
         Ok(())
     }
 }

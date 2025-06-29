@@ -1,4 +1,6 @@
-use crate::access::TableHeap;
+#[cfg(test)]
+use crate::access::Value;
+use crate::access::{DataType, TableHeap};
 use crate::catalog::Catalog;
 use crate::storage::buffer::BufferPoolManager;
 use crate::storage::buffer::lru::LruReplacer;
@@ -61,6 +63,17 @@ impl Database {
         Ok(())
     }
 
+    /// Create a new table with column definitions
+    pub fn create_table_with_columns(
+        &mut self,
+        table_name: &str,
+        columns: Vec<(&str, DataType)>,
+    ) -> Result<()> {
+        self.catalog
+            .create_table_with_columns(table_name, columns)?;
+        Ok(())
+    }
+
     /// Open a table for reading/writing
     pub fn open_table(&self, table_name: &str) -> Result<TableHeap> {
         let table_info = self
@@ -108,10 +121,11 @@ mod tests {
         let db = Database::create(&db_path)?;
         assert!(db_path.exists());
 
-        // Should contain system catalog
+        // Should contain system catalogs
         let tables = db.list_tables()?;
-        assert_eq!(tables.len(), 1);
+        assert_eq!(tables.len(), 2);
         assert!(tables.contains(&"pg_tables".to_string()));
+        assert!(tables.contains(&"pg_attribute".to_string()));
 
         Ok(())
     }
@@ -162,7 +176,7 @@ mod tests {
         {
             let db = Database::open(&db_path)?;
             let tables = db.list_tables()?;
-            assert_eq!(tables.len(), 3); // pg_tables + users + products
+            assert_eq!(tables.len(), 4); // pg_tables + pg_attribute + users + products
             assert!(tables.contains(&"users".to_string()));
             assert!(tables.contains(&"products".to_string()));
 
@@ -241,6 +255,57 @@ mod tests {
             let tuple = table.get(tid)?.expect("Data should persist");
             assert_eq!(tuple.data, b"Persistent data");
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_schema_integration() -> Result<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test.db");
+
+        let mut db = Database::create(&db_path)?;
+
+        // Create table with schema
+        db.create_table_with_columns(
+            "users",
+            vec![
+                ("id", DataType::Int32),
+                ("name", DataType::Varchar),
+                ("age", DataType::Int32),
+                ("active", DataType::Boolean),
+            ],
+        )?;
+
+        // Insert typed data
+        let mut table = db.open_table("users")?;
+        let tid1 = table.insert_values(&[
+            Value::Int32(1),
+            Value::String("Alice".to_string()),
+            Value::Int32(25),
+            Value::Boolean(true),
+        ])?;
+
+        let tid2 = table.insert_values(&[
+            Value::Int32(2),
+            Value::String("Bob".to_string()),
+            Value::Int32(30),
+            Value::Boolean(false),
+        ])?;
+
+        // Read data back
+        let tuple1 = table.get(tid1)?.expect("Tuple should exist");
+        let values1 = crate::access::value::deserialize_values(&tuple1.data)?;
+        assert_eq!(values1.len(), 4);
+        assert_eq!(values1[0], Value::Int32(1));
+        assert_eq!(values1[1], Value::String("Alice".to_string()));
+        assert_eq!(values1[2], Value::Int32(25));
+        assert_eq!(values1[3], Value::Boolean(true));
+
+        let tuple2 = table.get(tid2)?.expect("Tuple should exist");
+        let values2 = crate::access::value::deserialize_values(&tuple2.data)?;
+        assert_eq!(values2[0], Value::Int32(2));
+        assert_eq!(values2[1], Value::String("Bob".to_string()));
 
         Ok(())
     }

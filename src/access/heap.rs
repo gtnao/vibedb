@@ -1,4 +1,5 @@
 use crate::access::tuple::{Tuple, TupleId};
+use crate::access::value::{Value, serialize_values};
 use crate::storage::buffer::BufferPoolManager;
 use crate::storage::page::{HeapPage, PageId};
 use anyhow::Result;
@@ -122,6 +123,12 @@ impl TableHeap {
         let mut heap_page = HeapPage::from_data(&mut guard);
         heap_page.delete_tuple(tuple_id.slot_id)?;
         Ok(())
+    }
+
+    /// Insert values as a tuple
+    pub fn insert_values(&mut self, values: &[Value]) -> Result<TupleId> {
+        let data = serialize_values(values)?;
+        self.insert(&data)
     }
 }
 
