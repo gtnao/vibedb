@@ -1,2 +1,6 @@
 /target
 *.db
+
+# IMPORTANT: We explicitly do NOT ignore mod.rs files
+# If you see a mod.rs file, it's a VIOLATION of project rules!
+# Run ./check_no_mod_rs.sh to verify
