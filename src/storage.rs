@@ -1,3 +1,7 @@
-pub mod page_manager;
+pub mod buffer;
+pub mod disk;
+pub mod page;
 
-pub use page_manager::{PageId, PageManager};
+pub use buffer::{BufferPoolManager, PageReadGuard, PageWriteGuard};
+pub use disk::{PAGE_SIZE, PageManager};
+pub use page::{HeapPage, Page, PageId};

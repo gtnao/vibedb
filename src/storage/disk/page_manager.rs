@@ -1,12 +1,10 @@
+use crate::storage::page::PageId;
 use anyhow::{Context, Result, bail};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 pub const PAGE_SIZE: usize = 8192;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PageId(pub u32);
 
 pub struct PageManager {
     file: File,
@@ -93,8 +91,7 @@ impl PageManager {
         Ok((file_size / PAGE_SIZE as u64) as u32)
     }
 
-    #[allow(dead_code)]
-    fn allocate_page(&mut self) -> Result<PageId> {
+    pub fn allocate_page(&mut self) -> Result<PageId> {
         let current_pages = self.num_pages()?;
         let new_page_id = PageId(current_pages);
 
