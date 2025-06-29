@@ -36,6 +36,8 @@ pub struct TableInfo {
     pub first_page_id: PageId,
     /// Schema for this table (None means it should be loaded from pg_attribute)
     pub schema: Option<Vec<DataType>>,
+    /// Column names for this table (None means it should be loaded from pg_attribute)
+    pub column_names: Option<Vec<String>>,
     /// Custom deserializer for this table (None means use standard schema-based deserialization)
     pub custom_deserializer: Option<CustomDeserializer>,
 }
@@ -104,6 +106,7 @@ impl TableInfo {
             table_name,
             first_page_id,
             schema: None,
+            column_names: None,
             custom_deserializer: None,
         })
     }
@@ -239,8 +242,9 @@ impl Catalog {
             table_id: CATALOG_TABLE_ID,
             table_name: CATALOG_TABLE_NAME.to_string(),
             first_page_id: CATALOG_FIRST_PAGE,
-            schema: None,              // Will be populated later
-            custom_deserializer: None, // Will be populated later
+            schema: None,
+            column_names: None,
+            custom_deserializer: None,
         };
 
         drop(guard); // Release the page guard before inserting
@@ -255,8 +259,9 @@ impl Catalog {
             table_id: CATALOG_ATTR_TABLE_ID,
             table_name: CATALOG_ATTR_TABLE_NAME.to_string(),
             first_page_id: attr_page_id,
-            schema: None,              // Will be populated later
-            custom_deserializer: None, // Will be populated later
+            schema: None,
+            column_names: None,
+            custom_deserializer: None,
         };
         catalog_heap.insert(&attr_table_info.serialize())?;
 
@@ -341,10 +346,12 @@ impl Catalog {
 
         // Set up pg_tables metadata
         let mut catalog_info_with_meta = catalog_info;
-        catalog_info_with_meta.schema = Some(vec![
-            DataType::Int32,   // table_id
-            DataType::Varchar, // table_name
-            DataType::Int32,   // first_page_id
+        catalog_info_with_meta.schema =
+            Some(vec![DataType::Int32, DataType::Varchar, DataType::Int32]);
+        catalog_info_with_meta.column_names = Some(vec![
+            "table_id".to_string(),
+            "table_name".to_string(),
+            "first_page_id".to_string(),
         ]);
         catalog_info_with_meta.custom_deserializer = Some(deserialize_pg_tables);
         initial_table_cache.insert(CATALOG_TABLE_NAME.to_string(), catalog_info_with_meta);
@@ -352,10 +359,16 @@ impl Catalog {
         // Set up pg_attribute metadata
         let mut attr_info_with_meta = attr_table_info;
         attr_info_with_meta.schema = Some(vec![
-            DataType::Int32,   // table_id
-            DataType::Varchar, // column_name
-            DataType::Int32,   // column_type
-            DataType::Int32,   // column_order
+            DataType::Int32,
+            DataType::Varchar,
+            DataType::Int32,
+            DataType::Int32,
+        ]);
+        attr_info_with_meta.column_names = Some(vec![
+            "table_id".to_string(),
+            "column_name".to_string(),
+            "column_type".to_string(),
+            "column_order".to_string(),
         ]);
         attr_info_with_meta.custom_deserializer = Some(deserialize_pg_attribute);
         initial_table_cache.insert(CATALOG_ATTR_TABLE_NAME.to_string(), attr_info_with_meta);
@@ -424,20 +437,27 @@ impl Catalog {
 
         // Set metadata for system tables
         if let Some(pg_tables_info) = table_cache.get_mut(CATALOG_TABLE_NAME) {
-            pg_tables_info.schema = Some(vec![
-                DataType::Int32,   // table_id
-                DataType::Varchar, // table_name
-                DataType::Int32,   // first_page_id
+            pg_tables_info.schema = Some(vec![DataType::Int32, DataType::Varchar, DataType::Int32]);
+            pg_tables_info.column_names = Some(vec![
+                "table_id".to_string(),
+                "table_name".to_string(),
+                "first_page_id".to_string(),
             ]);
             pg_tables_info.custom_deserializer = Some(deserialize_pg_tables);
         }
 
         if let Some(pg_attribute_info) = table_cache.get_mut(CATALOG_ATTR_TABLE_NAME) {
             pg_attribute_info.schema = Some(vec![
-                DataType::Int32,   // table_id
-                DataType::Varchar, // column_name
-                DataType::Int32,   // column_type
-                DataType::Int32,   // column_order
+                DataType::Int32,
+                DataType::Varchar,
+                DataType::Int32,
+                DataType::Int32,
+            ]);
+            pg_attribute_info.column_names = Some(vec![
+                "table_id".to_string(),
+                "column_name".to_string(),
+                "column_type".to_string(),
+                "column_order".to_string(),
             ]);
             pg_attribute_info.custom_deserializer = Some(deserialize_pg_attribute);
         }
@@ -544,8 +564,9 @@ impl Catalog {
             table_id,
             table_name: name.to_string(),
             first_page_id,
-            schema: None,              // User tables get schema from pg_attribute
-            custom_deserializer: None, // User tables use standard deserialization
+            schema: None,
+            column_names: None,
+            custom_deserializer: None,
         };
 
         // Insert into catalog
@@ -689,6 +710,7 @@ mod tests {
             table_name: "test_table".to_string(),
             first_page_id: PageId(123),
             schema: None,
+            column_names: None,
             custom_deserializer: None,
         };
 

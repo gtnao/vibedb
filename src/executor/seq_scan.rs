@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 use crate::access::TableHeap;
-use crate::access::{DataType, TableScanner, Tuple};
+use crate::access::{TableScanner, Tuple};
 use crate::executor::{ColumnInfo, ExecutionContext, Executor};
 use anyhow::{Result, bail};
 
@@ -43,27 +43,21 @@ impl Executor for SeqScanExecutor {
 
         // Get schema and output schema
         let (schema, custom_deserializer) = if let Some(ref predefined_schema) = table_info.schema {
-            // System table with predefined schema
-            self.output_schema = match self.table_name.as_str() {
-                crate::catalog::CATALOG_TABLE_NAME => vec![
-                    ColumnInfo::new("table_id", DataType::Int32),
-                    ColumnInfo::new("table_name", DataType::Varchar),
-                    ColumnInfo::new("first_page_id", DataType::Int32),
-                ],
-                crate::catalog::CATALOG_ATTR_TABLE_NAME => vec![
-                    ColumnInfo::new("table_id", DataType::Int32),
-                    ColumnInfo::new("column_name", DataType::Varchar),
-                    ColumnInfo::new("column_type", DataType::Int32),
-                    ColumnInfo::new("column_order", DataType::Int32),
-                ],
-                _ => {
-                    // Generic system table - build from schema
-                    predefined_schema
-                        .iter()
-                        .enumerate()
-                        .map(|(i, dt)| ColumnInfo::new(&format!("col{}", i), *dt))
-                        .collect()
-                }
+            // Table with predefined schema (e.g., system tables)
+            self.output_schema = if let Some(ref column_names) = table_info.column_names {
+                // Use provided column names
+                predefined_schema
+                    .iter()
+                    .zip(column_names.iter())
+                    .map(|(dt, name)| ColumnInfo::new(name.clone(), *dt))
+                    .collect()
+            } else {
+                // Generate generic column names
+                predefined_schema
+                    .iter()
+                    .enumerate()
+                    .map(|(i, dt)| ColumnInfo::new(format!("col{}", i), *dt))
+                    .collect()
             };
             (predefined_schema.clone(), table_info.custom_deserializer)
         } else {
