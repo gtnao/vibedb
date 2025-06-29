@@ -1,5 +1,5 @@
 use crate::access::tuple::{Tuple, TupleId};
-use crate::access::value::{Value, serialize_values};
+use crate::access::value::{DataType, Value, serialize_values};
 use crate::storage::buffer::BufferPoolManager;
 use crate::storage::page::{HeapPage, PageId};
 use anyhow::Result;
@@ -125,9 +125,9 @@ impl TableHeap {
         Ok(())
     }
 
-    /// Insert values as a tuple
-    pub fn insert_values(&mut self, values: &[Value]) -> Result<TupleId> {
-        let data = serialize_values(values)?;
+    /// Insert values as a tuple with schema
+    pub fn insert_values(&mut self, values: &[Value], schema: &[DataType]) -> Result<TupleId> {
+        let data = serialize_values(values, schema)?;
         self.insert(&data)
     }
 }

@@ -32,39 +32,53 @@ fn main() -> Result<()> {
     let tables = db.list_tables()?;
     println!("Tables in database: {:?}", tables);
 
+    // Get the schema for the users table
+    let table_info = db.catalog.get_table("users")?.unwrap();
+    let columns = db.catalog.get_table_columns(table_info.table_id)?;
+    let schema: Vec<DataType> = columns.iter().map(|c| c.column_type).collect();
+
     // Insert typed data
     let mut users_table = db.open_table("users")?;
 
     // Insert users with proper types
-    let tid1 = users_table.insert_values(&[
-        Value::Int32(1),
-        Value::String("Alice".to_string()),
-        Value::String("alice@example.com".to_string()),
-        Value::Int32(25),
-        Value::Boolean(true),
-    ])?;
+    let tid1 = users_table.insert_values(
+        &[
+            Value::Int32(1),
+            Value::String("Alice".to_string()),
+            Value::String("alice@example.com".to_string()),
+            Value::Int32(25),
+            Value::Boolean(true),
+        ],
+        &schema,
+    )?;
 
-    let tid2 = users_table.insert_values(&[
-        Value::Int32(2),
-        Value::String("Bob".to_string()),
-        Value::String("bob@example.com".to_string()),
-        Value::Int32(30),
-        Value::Boolean(false),
-    ])?;
+    let _tid2 = users_table.insert_values(
+        &[
+            Value::Int32(2),
+            Value::String("Bob".to_string()),
+            Value::String("bob@example.com".to_string()),
+            Value::Int32(30),
+            Value::Boolean(false),
+        ],
+        &schema,
+    )?;
 
-    let tid3 = users_table.insert_values(&[
-        Value::Int32(3),
-        Value::String("Charlie".to_string()),
-        Value::String("charlie@example.com".to_string()),
-        Value::Int32(35),
-        Value::Boolean(true),
-    ])?;
+    let _tid3 = users_table.insert_values(
+        &[
+            Value::Int32(3),
+            Value::String("Charlie".to_string()),
+            Value::String("charlie@example.com".to_string()),
+            Value::Int32(35),
+            Value::Boolean(true),
+        ],
+        &schema,
+    )?;
 
     println!("Inserted 3 users with typed data");
 
     // Read data back
     let tuple1 = users_table.get(tid1)?.expect("User 1 should exist");
-    let values1 = vibedb::access::value::deserialize_values(&tuple1.data)?;
+    let values1 = vibedb::access::value::deserialize_values(&tuple1.data, &schema)?;
 
     println!("\nUser 1:");
     println!("  ID: {:?}", values1[0]);
@@ -74,16 +88,19 @@ fn main() -> Result<()> {
     println!("  Active: {:?}", values1[4]);
 
     // Insert with NULL value
-    let tid4 = users_table.insert_values(&[
-        Value::Int32(4),
-        Value::String("David".to_string()),
-        Value::Null, // No email
-        Value::Int32(28),
-        Value::Boolean(true),
-    ])?;
+    let tid4 = users_table.insert_values(
+        &[
+            Value::Int32(4),
+            Value::String("David".to_string()),
+            Value::Null, // No email
+            Value::Int32(28),
+            Value::Boolean(true),
+        ],
+        &schema,
+    )?;
 
     let tuple4 = users_table.get(tid4)?.expect("User 4 should exist");
-    let values4 = vibedb::access::value::deserialize_values(&tuple4.data)?;
+    let values4 = vibedb::access::value::deserialize_values(&tuple4.data, &schema)?;
 
     println!("\nUser 4 (with NULL email):");
     println!("  ID: {:?}", values4[0]);

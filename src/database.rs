@@ -11,7 +11,7 @@ use std::path::Path;
 /// High-level database interface that integrates all layers
 pub struct Database {
     buffer_pool: BufferPoolManager,
-    catalog: Catalog,
+    pub catalog: Catalog,
 }
 
 impl Database {
@@ -277,25 +277,36 @@ mod tests {
             ],
         )?;
 
+        // Get the schema for the table
+        let table_info = db.catalog.get_table("users")?.unwrap();
+        let columns = db.catalog.get_table_columns(table_info.table_id)?;
+        let schema: Vec<DataType> = columns.iter().map(|c| c.column_type).collect();
+
         // Insert typed data
         let mut table = db.open_table("users")?;
-        let tid1 = table.insert_values(&[
-            Value::Int32(1),
-            Value::String("Alice".to_string()),
-            Value::Int32(25),
-            Value::Boolean(true),
-        ])?;
+        let tid1 = table.insert_values(
+            &[
+                Value::Int32(1),
+                Value::String("Alice".to_string()),
+                Value::Int32(25),
+                Value::Boolean(true),
+            ],
+            &schema,
+        )?;
 
-        let tid2 = table.insert_values(&[
-            Value::Int32(2),
-            Value::String("Bob".to_string()),
-            Value::Int32(30),
-            Value::Boolean(false),
-        ])?;
+        let tid2 = table.insert_values(
+            &[
+                Value::Int32(2),
+                Value::String("Bob".to_string()),
+                Value::Int32(30),
+                Value::Boolean(false),
+            ],
+            &schema,
+        )?;
 
         // Read data back
         let tuple1 = table.get(tid1)?.expect("Tuple should exist");
-        let values1 = crate::access::value::deserialize_values(&tuple1.data)?;
+        let values1 = crate::access::value::deserialize_values(&tuple1.data, &schema)?;
         assert_eq!(values1.len(), 4);
         assert_eq!(values1[0], Value::Int32(1));
         assert_eq!(values1[1], Value::String("Alice".to_string()));
@@ -303,7 +314,7 @@ mod tests {
         assert_eq!(values1[3], Value::Boolean(true));
 
         let tuple2 = table.get(tid2)?.expect("Tuple should exist");
-        let values2 = crate::access::value::deserialize_values(&tuple2.data)?;
+        let values2 = crate::access::value::deserialize_values(&tuple2.data, &schema)?;
         assert_eq!(values2[0], Value::Int32(2));
         assert_eq!(values2[1], Value::String("Bob".to_string()));
 

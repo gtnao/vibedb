@@ -52,111 +52,139 @@ impl Value {
     }
 }
 
-/// Serialize a vector of values into bytes
-pub fn serialize_values(values: &[Value]) -> Result<Vec<u8>> {
+/// Serialize values according to schema
+pub fn serialize_values(values: &[Value], schema: &[DataType]) -> Result<Vec<u8>> {
+    if values.len() != schema.len() {
+        bail!(
+            "Value count {} doesn't match schema length {}",
+            values.len(),
+            schema.len()
+        );
+    }
+
     let mut data = Vec::new();
 
-    // Write number of values
-    data.extend_from_slice(&(values.len() as u32).to_le_bytes());
+    // NULL bitmap (1 bit per column, rounded up to bytes)
+    let null_bitmap_size = schema.len().div_ceil(8);
+    let mut null_bitmap = vec![0u8; null_bitmap_size];
 
-    for value in values {
+    // First pass: build NULL bitmap and validate types
+    for (i, (value, expected_type)) in values.iter().zip(schema.iter()).enumerate() {
         match value {
             Value::Null => {
-                data.push(0); // Type tag for NULL
+                // Set bit in NULL bitmap
+                let byte_idx = i / 8;
+                let bit_idx = i % 8;
+                null_bitmap[byte_idx] |= 1 << bit_idx;
             }
-            Value::Boolean(b) => {
-                data.push(1); // Type tag for Boolean
+            _ => {
+                // Validate type compatibility
+                if !value.is_compatible_with(*expected_type) {
+                    bail!(
+                        "Value {:?} is not compatible with type {:?}",
+                        value,
+                        expected_type
+                    );
+                }
+            }
+        }
+    }
+
+    // Write NULL bitmap
+    data.extend_from_slice(&null_bitmap);
+
+    // Second pass: write non-NULL values
+    for (value, data_type) in values.iter().zip(schema.iter()) {
+        match (value, data_type) {
+            (Value::Null, _) => {
+                // Skip NULL values - already in bitmap
+            }
+            (Value::Boolean(b), DataType::Boolean) => {
                 data.push(if *b { 1 } else { 0 });
             }
-            Value::Int32(i) => {
-                data.push(2); // Type tag for Int32
+            (Value::Int32(i), DataType::Int32) => {
                 data.extend_from_slice(&i.to_le_bytes());
             }
-            Value::String(s) => {
-                data.push(4); // Type tag for String
+            (Value::String(s), DataType::Varchar) => {
+                // Variable length: store length then data
                 let bytes = s.as_bytes();
                 data.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
                 data.extend_from_slice(bytes);
             }
+            _ => unreachable!("Type compatibility already checked"),
         }
     }
 
     Ok(data)
 }
 
-/// Deserialize bytes into a vector of values
-pub fn deserialize_values(data: &[u8]) -> Result<Vec<Value>> {
-    if data.len() < 4 {
-        bail!("Invalid value data: too short");
+/// Deserialize bytes according to schema
+pub fn deserialize_values(data: &[u8], schema: &[DataType]) -> Result<Vec<Value>> {
+    if schema.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let null_bitmap_size = schema.len().div_ceil(8);
+    if data.len() < null_bitmap_size {
+        bail!("Data too short for NULL bitmap");
     }
 
     let mut offset = 0;
-    let count = u32::from_le_bytes([
-        data[offset],
-        data[offset + 1],
-        data[offset + 2],
-        data[offset + 3],
-    ]) as usize;
-    offset += 4;
+    let null_bitmap = &data[offset..offset + null_bitmap_size];
+    offset += null_bitmap_size;
 
-    let mut values = Vec::with_capacity(count);
+    let mut values = Vec::with_capacity(schema.len());
 
-    for _ in 0..count {
-        if offset >= data.len() {
-            bail!("Invalid value data: unexpected end");
-        }
+    for (i, data_type) in schema.iter().enumerate() {
+        // Check NULL bitmap
+        let byte_idx = i / 8;
+        let bit_idx = i % 8;
+        let is_null = (null_bitmap[byte_idx] & (1 << bit_idx)) != 0;
 
-        let type_tag = data[offset];
-        offset += 1;
-
-        match type_tag {
-            0 => {
-                // NULL
-                values.push(Value::Null);
-            }
-            1 => {
-                // Boolean
-                if offset >= data.len() {
-                    bail!("Invalid boolean value: no data");
+        if is_null {
+            values.push(Value::Null);
+        } else {
+            match data_type {
+                DataType::Boolean => {
+                    if offset >= data.len() {
+                        bail!("Invalid boolean value: no data");
+                    }
+                    values.push(Value::Boolean(data[offset] != 0));
+                    offset += 1;
                 }
-                values.push(Value::Boolean(data[offset] != 0));
-                offset += 1;
-            }
-            2 => {
-                // Int32
-                if offset + 4 > data.len() {
-                    bail!("Invalid int32 value: not enough data");
+                DataType::Int32 => {
+                    if offset + 4 > data.len() {
+                        bail!("Invalid int32 value: not enough data");
+                    }
+                    let value = i32::from_le_bytes([
+                        data[offset],
+                        data[offset + 1],
+                        data[offset + 2],
+                        data[offset + 3],
+                    ]);
+                    values.push(Value::Int32(value));
+                    offset += 4;
                 }
-                let value = i32::from_le_bytes([
-                    data[offset],
-                    data[offset + 1],
-                    data[offset + 2],
-                    data[offset + 3],
-                ]);
-                values.push(Value::Int32(value));
-                offset += 4;
-            }
-            4 => {
-                // String
-                if offset + 4 > data.len() {
-                    bail!("Invalid string value: no length");
-                }
-                let len = u32::from_le_bytes([
-                    data[offset],
-                    data[offset + 1],
-                    data[offset + 2],
-                    data[offset + 3],
-                ]) as usize;
-                offset += 4;
+                DataType::Varchar => {
+                    if offset + 4 > data.len() {
+                        bail!("Invalid string value: no length");
+                    }
+                    let len = u32::from_le_bytes([
+                        data[offset],
+                        data[offset + 1],
+                        data[offset + 2],
+                        data[offset + 3],
+                    ]) as usize;
+                    offset += 4;
 
-                if offset + len > data.len() {
-                    bail!("Invalid string value: string too long");
+                    if offset + len > data.len() {
+                        bail!("Invalid string value: string too long");
+                    }
+                    let s = String::from_utf8(data[offset..offset + len].to_vec())?;
+                    values.push(Value::String(s));
+                    offset += len;
                 }
-                let s = String::from_utf8(data[offset..offset + len].to_vec())?;
-                values.push(Value::String(s));
-                offset += len;
             }
-            _ => bail!("Unknown value type tag: {}", type_tag),
         }
     }
 
@@ -196,8 +224,15 @@ mod tests {
             Value::Null,
         ];
 
-        let serialized = serialize_values(&values)?;
-        let deserialized = deserialize_values(&serialized)?;
+        let schema = vec![
+            DataType::Int32,
+            DataType::Varchar,
+            DataType::Boolean,
+            DataType::Varchar, // NULL is allowed for any type
+        ];
+
+        let serialized = serialize_values(&values, &schema)?;
+        let deserialized = deserialize_values(&serialized, &schema)?;
 
         assert_eq!(values, deserialized);
         Ok(())
@@ -206,8 +241,9 @@ mod tests {
     #[test]
     fn test_empty_values() -> Result<()> {
         let values: Vec<Value> = vec![];
-        let serialized = serialize_values(&values)?;
-        let deserialized = deserialize_values(&serialized)?;
+        let schema: Vec<DataType> = vec![];
+        let serialized = serialize_values(&values, &schema)?;
+        let deserialized = deserialize_values(&serialized, &schema)?;
         assert_eq!(values, deserialized);
         Ok(())
     }
@@ -216,10 +252,38 @@ mod tests {
     fn test_long_string() -> Result<()> {
         let long_string = "x".repeat(1000);
         let values = vec![Value::String(long_string.clone())];
+        let schema = vec![DataType::Varchar];
 
-        let serialized = serialize_values(&values)?;
-        let deserialized = deserialize_values(&serialized)?;
+        let serialized = serialize_values(&values, &schema)?;
+        let deserialized = deserialize_values(&serialized, &schema)?;
 
+        assert_eq!(values, deserialized);
+        Ok(())
+    }
+
+    #[test]
+    fn test_null_bitmap() -> Result<()> {
+        let values = vec![
+            Value::Int32(1),
+            Value::Null,
+            Value::String("test".to_string()),
+            Value::Null,
+            Value::Boolean(true),
+        ];
+
+        let schema = vec![
+            DataType::Int32,
+            DataType::Int32,
+            DataType::Varchar,
+            DataType::Boolean,
+            DataType::Boolean,
+        ];
+
+        let serialized = serialize_values(&values, &schema)?;
+        // NULL bitmap should be 1 byte: 0b00001010 = 10
+        assert_eq!(serialized[0], 0b00001010);
+
+        let deserialized = deserialize_values(&serialized, &schema)?;
         assert_eq!(values, deserialized);
         Ok(())
     }
