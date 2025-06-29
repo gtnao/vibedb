@@ -10,9 +10,7 @@ use anyhow::Result;
 use std::path::Path;
 use vibedb::access::{DataType, Value};
 use vibedb::database::Database;
-use vibedb::executor::{
-    ExecutionContext, Executor, InsertExecutor, SeqScanExecutor, SystemSeqScanExecutor,
-};
+use vibedb::executor::{ExecutionContext, Executor, InsertExecutor, SeqScanExecutor};
 
 fn main() -> Result<()> {
     println!("=== vibedb Executor Demo ===\n");
@@ -132,7 +130,7 @@ fn main() -> Result<()> {
 
     // List all tables
     println!("\npg_tables:");
-    let mut system_scan = SystemSeqScanExecutor::new("pg_tables".to_string(), context.clone());
+    let mut system_scan = SeqScanExecutor::new("pg_tables".to_string(), context.clone());
     system_scan.init()?;
 
     let system_schema = vec![DataType::Int32, DataType::Varchar, DataType::Int32];
@@ -157,7 +155,7 @@ fn main() -> Result<()> {
 
     // List columns for employees table
     println!("\npg_attribute (employees table):");
-    let mut attr_scan = SystemSeqScanExecutor::new("pg_attribute".to_string(), context.clone());
+    let mut attr_scan = SeqScanExecutor::new("pg_attribute".to_string(), context.clone());
     attr_scan.init()?;
 
     // Get employees table ID

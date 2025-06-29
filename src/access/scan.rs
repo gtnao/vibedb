@@ -12,6 +12,7 @@ pub struct TableScanner {
     current_page_id: Option<PageId>,
     current_slot: u16,
     schema: Vec<DataType>,
+    table_name: Option<String>, // For system table handling
 }
 
 impl TableScanner {
@@ -26,6 +27,23 @@ impl TableScanner {
             current_page_id: first_page_id,
             current_slot: 0,
             schema,
+            table_name: None,
+        }
+    }
+
+    /// Create a new table scanner with table name (for system tables)
+    pub fn new_with_name(
+        buffer_pool: BufferPoolManager,
+        first_page_id: Option<PageId>,
+        schema: Vec<DataType>,
+        table_name: String,
+    ) -> Self {
+        Self {
+            buffer_pool,
+            current_page_id: first_page_id,
+            current_slot: 0,
+            schema,
+            table_name: Some(table_name),
         }
     }
 
@@ -57,7 +75,16 @@ impl TableScanner {
             match heap_page.get_tuple(slot_id) {
                 Ok(data) => {
                     // Deserialize the tuple data
-                    let values = deserialize_values(data, &self.schema)?;
+                    let values = if let Some(ref table_name) = self.table_name {
+                        // System table - use custom deserialization
+                        if crate::catalog::is_system_table(table_name) {
+                            crate::catalog::deserialize_system_table_data(table_name, data)?
+                        } else {
+                            deserialize_values(data, &self.schema)?
+                        }
+                    } else {
+                        deserialize_values(data, &self.schema)?
+                    };
                     let tuple_id = TupleId::new(page_id, slot_id);
                     return Ok(Some((tuple_id, values)));
                 }

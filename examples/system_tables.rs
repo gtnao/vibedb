@@ -7,7 +7,7 @@ use anyhow::Result;
 use std::path::Path;
 use vibedb::access::{DataType, Value};
 use vibedb::database::Database;
-use vibedb::executor::{ExecutionContext, Executor, SystemSeqScanExecutor};
+use vibedb::executor::{ExecutionContext, Executor, SeqScanExecutor};
 
 fn main() -> Result<()> {
     println!("=== vibedb System Tables Demo ===\n");
@@ -59,7 +59,7 @@ fn main() -> Result<()> {
 
     // Query pg_tables to list all tables
     println!("=== All Tables (pg_tables) ===");
-    let mut tables_scan = SystemSeqScanExecutor::new("pg_tables".to_string(), context.clone());
+    let mut tables_scan = SeqScanExecutor::new("pg_tables".to_string(), context.clone());
     tables_scan.init()?;
 
     let table_schema = vec![DataType::Int32, DataType::Varchar, DataType::Int32];
@@ -93,7 +93,7 @@ fn main() -> Result<()> {
 
     // Query pg_attribute to show all columns
     println!("\n=== All Columns (pg_attribute) ===");
-    let mut attr_scan = SystemSeqScanExecutor::new("pg_attribute".to_string(), context.clone());
+    let mut attr_scan = SeqScanExecutor::new("pg_attribute".to_string(), context.clone());
     attr_scan.init()?;
 
     let attr_schema = vec![

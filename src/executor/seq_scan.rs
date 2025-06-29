@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 use crate::access::TableHeap;
-use crate::access::{TableScanner, Tuple};
+use crate::access::{DataType, TableScanner, Tuple};
 use crate::executor::{ColumnInfo, ExecutionContext, Executor};
 use anyhow::{Result, bail};
 
@@ -41,26 +41,54 @@ impl Executor for SeqScanExecutor {
             .get_table(&self.table_name)?
             .ok_or_else(|| anyhow::anyhow!("Table '{}' not found", self.table_name))?;
 
-        // Get table schema
-        let columns = self
-            .context
-            .catalog
-            .get_table_columns(table_info.table_id)?;
+        // Check if this is a system table
+        let is_system_table = crate::catalog::is_system_table(&self.table_name);
 
-        // Build output schema
-        self.output_schema = columns
-            .iter()
-            .map(|col| ColumnInfo::new(&col.column_name, col.column_type))
-            .collect();
+        let schema = if is_system_table {
+            // For system tables, get the predefined schema
+            let schema = crate::catalog::get_system_table_schema(&self.table_name)
+                .ok_or_else(|| anyhow::anyhow!("Unknown system table: {}", self.table_name))?;
 
-        // Extract just the data types for the scanner
-        let schema = columns.into_iter().map(|col| col.column_type).collect();
+            // Build output schema based on system table type
+            self.output_schema = match self.table_name.as_str() {
+                crate::catalog::CATALOG_TABLE_NAME => vec![
+                    ColumnInfo::new("table_id", DataType::Int32),
+                    ColumnInfo::new("table_name", DataType::Varchar),
+                    ColumnInfo::new("first_page_id", DataType::Int32),
+                ],
+                crate::catalog::CATALOG_ATTR_TABLE_NAME => vec![
+                    ColumnInfo::new("table_id", DataType::Int32),
+                    ColumnInfo::new("column_name", DataType::Varchar),
+                    ColumnInfo::new("column_type", DataType::Int32),
+                    ColumnInfo::new("column_order", DataType::Int32),
+                ],
+                _ => unreachable!(),
+            };
+
+            schema
+        } else {
+            // For user tables, get schema from catalog
+            let columns = self
+                .context
+                .catalog
+                .get_table_columns(table_info.table_id)?;
+
+            // Build output schema
+            self.output_schema = columns
+                .iter()
+                .map(|col| ColumnInfo::new(&col.column_name, col.column_type))
+                .collect();
+
+            // Extract just the data types for the scanner
+            columns.into_iter().map(|col| col.column_type).collect()
+        };
 
         // Create scanner
-        self.scanner = Some(TableScanner::new(
+        self.scanner = Some(TableScanner::new_with_name(
             (*self.context.buffer_pool).clone(),
             Some(table_info.first_page_id),
             schema,
+            self.table_name.clone(),
         ));
 
         self.initialized = true;
@@ -259,11 +287,10 @@ mod tests {
         // Create context
         let context = ExecutionContext::new(db.catalog.clone(), db.buffer_pool.clone());
 
-        // For system tables, we should use SystemSeqScanExecutor
-        use crate::executor::SystemSeqScanExecutor;
+        // System tables now work with regular SeqScanExecutor
 
         // Scan pg_tables
-        let mut executor = SystemSeqScanExecutor::new("pg_tables".to_string(), context.clone());
+        let mut executor = SeqScanExecutor::new("pg_tables".to_string(), context.clone());
         executor.init()?;
 
         // Should have at least 2 system tables + 2 user tables
@@ -274,7 +301,7 @@ mod tests {
         assert!(count >= 4);
 
         // Scan pg_attribute
-        let mut executor2 = SystemSeqScanExecutor::new("pg_attribute".to_string(), context);
+        let mut executor2 = SeqScanExecutor::new("pg_attribute".to_string(), context);
         executor2.init()?;
 
         // Should have multiple attribute entries

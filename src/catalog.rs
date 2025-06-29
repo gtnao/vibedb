@@ -1,4 +1,4 @@
-use crate::access::{DataType, TableHeap};
+use crate::access::{DataType, TableHeap, Value};
 use crate::storage::buffer::BufferPoolManager;
 use crate::storage::page::PageId;
 use anyhow::{Result, bail};
@@ -13,6 +13,44 @@ pub const CATALOG_TABLE_NAME: &str = "pg_tables";
 
 pub const CATALOG_ATTR_TABLE_ID: TableId = 2;
 pub const CATALOG_ATTR_TABLE_NAME: &str = "pg_attribute";
+
+/// Get schema for system tables
+pub fn get_system_table_schema(table_name: &str) -> Option<Vec<DataType>> {
+    match table_name {
+        CATALOG_TABLE_NAME => Some(vec![
+            DataType::Int32,   // table_id
+            DataType::Varchar, // table_name
+            DataType::Int32,   // first_page_id
+        ]),
+        CATALOG_ATTR_TABLE_NAME => Some(vec![
+            DataType::Int32,   // table_id
+            DataType::Varchar, // column_name
+            DataType::Int32,   // column_type (as u8)
+            DataType::Int32,   // column_order
+        ]),
+        _ => None,
+    }
+}
+
+/// Check if a table is a system table
+pub fn is_system_table(table_name: &str) -> bool {
+    matches!(table_name, CATALOG_TABLE_NAME | CATALOG_ATTR_TABLE_NAME)
+}
+
+/// Deserialize system table data into Values
+pub fn deserialize_system_table_data(table_name: &str, data: &[u8]) -> Result<Vec<Value>> {
+    match table_name {
+        CATALOG_TABLE_NAME => {
+            let table_info = TableInfo::deserialize(data)?;
+            Ok(table_info.to_values())
+        }
+        CATALOG_ATTR_TABLE_NAME => {
+            let attr_row = AttributeRow::deserialize(data)?;
+            Ok(attr_row.to_values())
+        }
+        _ => bail!("Not a system table: {}", table_name),
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct TableInfo {
@@ -29,6 +67,15 @@ impl TableInfo {
         data.extend_from_slice(self.table_name.as_bytes());
         data.extend_from_slice(&self.first_page_id.0.to_le_bytes());
         data
+    }
+
+    /// Convert to Values for scanning
+    pub fn to_values(&self) -> Vec<Value> {
+        vec![
+            Value::Int32(self.table_id as i32),
+            Value::String(self.table_name.clone()),
+            Value::Int32(self.first_page_id.0 as i32),
+        ]
     }
 
     fn deserialize(data: &[u8]) -> Result<Self> {
@@ -151,6 +198,16 @@ impl AttributeRow {
         data.extend_from_slice(&self.table_id.to_le_bytes());
         data.extend_from_slice(&self.column_info.serialize());
         data
+    }
+
+    /// Convert to Values for scanning
+    fn to_values(&self) -> Vec<Value> {
+        vec![
+            Value::Int32(self.table_id as i32),
+            Value::String(self.column_info.column_name.clone()),
+            Value::Int32(self.column_info.column_type as u8 as i32),
+            Value::Int32(self.column_info.column_order as i32),
+        ]
     }
 
     fn deserialize(data: &[u8]) -> Result<Self> {
