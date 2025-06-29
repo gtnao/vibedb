@@ -329,12 +329,19 @@ impl Deref for PageWriteGuard {
     type Target = [u8; PAGE_SIZE];
 
     fn deref(&self) -> &Self::Target {
+        // SAFETY: The data pointer is valid because:
+        // 1. It points to a Frame's data array which is heap-allocated and stable
+        // 2. The Frame cannot be evicted while this guard exists (pin_count > 0)
+        // 3. We hold a reference to BufferPoolInner, preventing deallocation
         unsafe { &*self.data }
     }
 }
 
 impl DerefMut for PageWriteGuard {
     fn deref_mut(&mut self) -> &mut Self::Target {
+        // SAFETY: Same as Deref, plus:
+        // 1. PageWriteGuard ensures exclusive access (only one write guard per page)
+        // 2. The frame is automatically marked dirty when modified
         unsafe { &mut *self.data }
     }
 }
@@ -359,7 +366,11 @@ impl Drop for PageWriteGuard {
     }
 }
 
-// Mark as Send and Sync
+// SAFETY: PageReadGuard and PageWriteGuard can be safely sent between threads because:
+// 1. They maintain proper reference counting through Arc<BufferPoolInner>
+// 2. The underlying buffer pool uses appropriate synchronization (RwLock, Mutex)
+// 3. Pin counts ensure the frame won't be evicted while guards exist
+// 4. Multiple read guards are safe (shared access), single write guard ensures exclusive access
 unsafe impl Send for PageReadGuard {}
 unsafe impl Sync for PageReadGuard {}
 unsafe impl Send for PageWriteGuard {}

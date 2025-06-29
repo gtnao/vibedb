@@ -322,6 +322,8 @@ impl Catalog {
             match buffer_pool.fetch_page(page_id) {
                 Ok(guard) => {
                     // Create a temporary HeapPage view
+                    // SAFETY: Same safety guarantees as in TableHeap::get()
+                    // The guard ensures the page stays in memory during this operation
                     let page_data = unsafe {
                         std::slice::from_raw_parts_mut(
                             guard.as_ptr() as *mut u8,
@@ -394,6 +396,8 @@ impl Catalog {
             match self.buffer_pool.fetch_page(page_id) {
                 Ok(guard) => {
                     // Create a temporary HeapPage view
+                    // SAFETY: Same safety guarantees as in TableHeap::get()
+                    // The guard ensures the page stays in memory during this operation
                     let page_data = unsafe {
                         std::slice::from_raw_parts_mut(
                             guard.as_ptr() as *mut u8,
