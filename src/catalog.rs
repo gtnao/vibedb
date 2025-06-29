@@ -693,8 +693,63 @@ mod tests {
 
     #[test]
     fn test_catalog_persistence() -> Result<()> {
-        // Skip persistence test for now - it's causing issues
-        // TODO: Fix the persistence test properly
+        let dir = tempdir()?;
+        let file_path = dir.path().join("test_persist.db");
+        
+        // Create and populate catalog
+        {
+            let page_manager = PageManager::create(&file_path)?;
+            let replacer = Box::new(crate::storage::buffer::lru::LruReplacer::new(10));
+            let buffer_pool = BufferPoolManager::new(page_manager, replacer, 10);
+            let mut catalog = Catalog::initialize(buffer_pool)?;
+            
+            // Create some tables
+            catalog.create_table("users")?;
+            catalog.create_table("products")?;
+            catalog.create_table_with_columns(
+                "orders",
+                vec![
+                    ("order_id", DataType::Int32),
+                    ("user_id", DataType::Int32),
+                    ("total", DataType::Int32),
+                ],
+            )?;
+            
+            // Flush to ensure persistence
+            catalog.buffer_pool.flush_all()?;
+        }
+        
+        // Reopen and verify
+        {
+            let page_manager = PageManager::open(&file_path)?;
+            let replacer = Box::new(crate::storage::buffer::lru::LruReplacer::new(10));
+            let buffer_pool = BufferPoolManager::new(page_manager, replacer, 10);
+            let catalog = Catalog::open(buffer_pool)?;
+            
+            // Verify all tables exist
+            let tables = catalog.list_tables()?;
+            assert_eq!(tables.len(), 5); // pg_tables + pg_attribute + 3 user tables
+            
+            // Verify table names
+            let table_names: Vec<String> = tables.iter().map(|t| t.table_name.clone()).collect();
+            assert!(table_names.contains(&"pg_tables".to_string()));
+            assert!(table_names.contains(&"pg_attribute".to_string()));
+            assert!(table_names.contains(&"users".to_string()));
+            assert!(table_names.contains(&"products".to_string()));
+            assert!(table_names.contains(&"orders".to_string()));
+            
+            // Verify orders table columns
+            let orders_table = catalog.get_table("orders")?.unwrap();
+            let columns = catalog.get_table_columns(orders_table.table_id)?;
+            assert_eq!(columns.len(), 3);
+            assert_eq!(columns[0].column_name, "order_id");
+            assert_eq!(columns[0].column_type, DataType::Int32);
+            assert_eq!(columns[1].column_name, "user_id");
+            assert_eq!(columns[1].column_type, DataType::Int32);
+            assert_eq!(columns[2].column_name, "total");
+            assert_eq!(columns[2].column_type, DataType::Int32);
+        }
+        
         Ok(())
     }
 
