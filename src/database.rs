@@ -7,11 +7,12 @@ use crate::storage::buffer::lru::LruReplacer;
 use crate::storage::disk::PageManager;
 use anyhow::{Result, bail};
 use std::path::Path;
+use std::sync::Arc;
 
 /// High-level database interface that integrates all layers
 pub struct Database {
-    buffer_pool: BufferPoolManager,
-    pub catalog: Catalog,
+    pub buffer_pool: Arc<BufferPoolManager>,
+    pub catalog: Arc<Catalog>,
 }
 
 impl Database {
@@ -31,8 +32,8 @@ impl Database {
         let catalog = Catalog::initialize(buffer_pool.clone())?;
 
         Ok(Self {
-            buffer_pool,
-            catalog,
+            buffer_pool: Arc::new(buffer_pool),
+            catalog: Arc::new(catalog),
         })
     }
 
@@ -52,14 +53,16 @@ impl Database {
         let catalog = Catalog::open(buffer_pool.clone())?;
 
         Ok(Self {
-            buffer_pool,
-            catalog,
+            buffer_pool: Arc::new(buffer_pool),
+            catalog: Arc::new(catalog),
         })
     }
 
     /// Create a new table
     pub fn create_table(&mut self, table_name: &str) -> Result<()> {
-        self.catalog.create_table(table_name)?;
+        Arc::get_mut(&mut self.catalog)
+            .ok_or_else(|| anyhow::anyhow!("Cannot mutate catalog"))?
+            .create_table(table_name)?;
         Ok(())
     }
 
@@ -69,7 +72,8 @@ impl Database {
         table_name: &str,
         columns: Vec<(&str, DataType)>,
     ) -> Result<()> {
-        self.catalog
+        Arc::get_mut(&mut self.catalog)
+            .ok_or_else(|| anyhow::anyhow!("Cannot mutate catalog"))?
             .create_table_with_columns(table_name, columns)?;
         Ok(())
     }
@@ -82,7 +86,7 @@ impl Database {
             .ok_or_else(|| anyhow::anyhow!("Table '{}' does not exist", table_name))?;
 
         Ok(TableHeap::with_first_page(
-            self.buffer_pool.clone(),
+            (*self.buffer_pool).clone(),
             table_info.table_id,
             table_info.first_page_id,
         ))
@@ -95,7 +99,7 @@ impl Database {
     }
 
     /// Flush all dirty pages to disk
-    pub fn flush(&mut self) -> Result<()> {
+    pub fn flush(&self) -> Result<()> {
         self.buffer_pool.flush_all()
     }
 }

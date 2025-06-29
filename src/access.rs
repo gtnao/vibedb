@@ -12,9 +12,11 @@
 //! rather than raw bytes.
 
 pub mod heap;
+pub mod scan;
 pub mod tuple;
 pub mod value;
 
 pub use heap::TableHeap;
+pub use scan::TableScanner;
 pub use tuple::{Tuple, TupleId};
-pub use value::{DataType, Value};
+pub use value::{DataType, Value, deserialize_values, serialize_values};
