@@ -7,6 +7,9 @@ use std::sync::RwLock;
 
 pub type TableId = u32;
 
+/// Type alias for custom deserializer function
+pub type CustomDeserializer = fn(&[u8]) -> Result<Vec<Value>>;
+
 pub const CATALOG_TABLE_ID: TableId = 1;
 pub const CATALOG_FIRST_PAGE: PageId = PageId(0);
 pub const CATALOG_TABLE_NAME: &str = "pg_tables";
@@ -14,42 +17,16 @@ pub const CATALOG_TABLE_NAME: &str = "pg_tables";
 pub const CATALOG_ATTR_TABLE_ID: TableId = 2;
 pub const CATALOG_ATTR_TABLE_NAME: &str = "pg_attribute";
 
-/// Get schema for system tables
-pub fn get_system_table_schema(table_name: &str) -> Option<Vec<DataType>> {
-    match table_name {
-        CATALOG_TABLE_NAME => Some(vec![
-            DataType::Int32,   // table_id
-            DataType::Varchar, // table_name
-            DataType::Int32,   // first_page_id
-        ]),
-        CATALOG_ATTR_TABLE_NAME => Some(vec![
-            DataType::Int32,   // table_id
-            DataType::Varchar, // column_name
-            DataType::Int32,   // column_type (as u8)
-            DataType::Int32,   // column_order
-        ]),
-        _ => None,
-    }
+/// Deserializer for pg_tables
+fn deserialize_pg_tables(data: &[u8]) -> Result<Vec<Value>> {
+    let table_info = TableInfo::deserialize(data)?;
+    Ok(table_info.to_values())
 }
 
-/// Check if a table is a system table
-pub fn is_system_table(table_name: &str) -> bool {
-    matches!(table_name, CATALOG_TABLE_NAME | CATALOG_ATTR_TABLE_NAME)
-}
-
-/// Deserialize system table data into Values
-pub fn deserialize_system_table_data(table_name: &str, data: &[u8]) -> Result<Vec<Value>> {
-    match table_name {
-        CATALOG_TABLE_NAME => {
-            let table_info = TableInfo::deserialize(data)?;
-            Ok(table_info.to_values())
-        }
-        CATALOG_ATTR_TABLE_NAME => {
-            let attr_row = AttributeRow::deserialize(data)?;
-            Ok(attr_row.to_values())
-        }
-        _ => bail!("Not a system table: {}", table_name),
-    }
+/// Deserializer for pg_attribute  
+fn deserialize_pg_attribute(data: &[u8]) -> Result<Vec<Value>> {
+    let attr_row = AttributeRow::deserialize(data)?;
+    Ok(attr_row.to_values())
 }
 
 #[derive(Debug, Clone)]
@@ -57,6 +34,10 @@ pub struct TableInfo {
     pub table_id: TableId,
     pub table_name: String,
     pub first_page_id: PageId,
+    /// Schema for this table (None means it should be loaded from pg_attribute)
+    pub schema: Option<Vec<DataType>>,
+    /// Custom deserializer for this table (None means use standard schema-based deserialization)
+    pub custom_deserializer: Option<CustomDeserializer>,
 }
 
 impl TableInfo {
@@ -122,6 +103,8 @@ impl TableInfo {
             table_id,
             table_name,
             first_page_id,
+            schema: None,
+            custom_deserializer: None,
         })
     }
 }
@@ -256,6 +239,8 @@ impl Catalog {
             table_id: CATALOG_TABLE_ID,
             table_name: CATALOG_TABLE_NAME.to_string(),
             first_page_id: CATALOG_FIRST_PAGE,
+            schema: None,              // Will be populated later
+            custom_deserializer: None, // Will be populated later
         };
 
         drop(guard); // Release the page guard before inserting
@@ -270,6 +255,8 @@ impl Catalog {
             table_id: CATALOG_ATTR_TABLE_ID,
             table_name: CATALOG_ATTR_TABLE_NAME.to_string(),
             first_page_id: attr_page_id,
+            schema: None,              // Will be populated later
+            custom_deserializer: None, // Will be populated later
         };
         catalog_heap.insert(&attr_table_info.serialize())?;
 
@@ -349,10 +336,29 @@ impl Catalog {
             attribute_heap.insert(&attr_row.serialize())?;
         }
 
-        // Initialize caches
+        // Initialize caches with proper metadata
         let mut initial_table_cache = HashMap::new();
-        initial_table_cache.insert(CATALOG_TABLE_NAME.to_string(), catalog_info);
-        initial_table_cache.insert(CATALOG_ATTR_TABLE_NAME.to_string(), attr_table_info);
+
+        // Set up pg_tables metadata
+        let mut catalog_info_with_meta = catalog_info;
+        catalog_info_with_meta.schema = Some(vec![
+            DataType::Int32,   // table_id
+            DataType::Varchar, // table_name
+            DataType::Int32,   // first_page_id
+        ]);
+        catalog_info_with_meta.custom_deserializer = Some(deserialize_pg_tables);
+        initial_table_cache.insert(CATALOG_TABLE_NAME.to_string(), catalog_info_with_meta);
+
+        // Set up pg_attribute metadata
+        let mut attr_info_with_meta = attr_table_info;
+        attr_info_with_meta.schema = Some(vec![
+            DataType::Int32,   // table_id
+            DataType::Varchar, // column_name
+            DataType::Int32,   // column_type
+            DataType::Int32,   // column_order
+        ]);
+        attr_info_with_meta.custom_deserializer = Some(deserialize_pg_attribute);
+        initial_table_cache.insert(CATALOG_ATTR_TABLE_NAME.to_string(), attr_info_with_meta);
 
         Ok(Self {
             buffer_pool,
@@ -414,6 +420,26 @@ impl Catalog {
                 }
                 Err(_) => break,
             }
+        }
+
+        // Set metadata for system tables
+        if let Some(pg_tables_info) = table_cache.get_mut(CATALOG_TABLE_NAME) {
+            pg_tables_info.schema = Some(vec![
+                DataType::Int32,   // table_id
+                DataType::Varchar, // table_name
+                DataType::Int32,   // first_page_id
+            ]);
+            pg_tables_info.custom_deserializer = Some(deserialize_pg_tables);
+        }
+
+        if let Some(pg_attribute_info) = table_cache.get_mut(CATALOG_ATTR_TABLE_NAME) {
+            pg_attribute_info.schema = Some(vec![
+                DataType::Int32,   // table_id
+                DataType::Varchar, // column_name
+                DataType::Int32,   // column_type
+                DataType::Int32,   // column_order
+            ]);
+            pg_attribute_info.custom_deserializer = Some(deserialize_pg_attribute);
         }
 
         // Find pg_attribute table
@@ -518,6 +544,8 @@ impl Catalog {
             table_id,
             table_name: name.to_string(),
             first_page_id,
+            schema: None,              // User tables get schema from pg_attribute
+            custom_deserializer: None, // User tables use standard deserialization
         };
 
         // Insert into catalog
@@ -660,6 +688,8 @@ mod tests {
             table_id: 42,
             table_name: "test_table".to_string(),
             first_page_id: PageId(123),
+            schema: None,
+            custom_deserializer: None,
         };
 
         let serialized = info.serialize();

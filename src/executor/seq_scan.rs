@@ -41,15 +41,9 @@ impl Executor for SeqScanExecutor {
             .get_table(&self.table_name)?
             .ok_or_else(|| anyhow::anyhow!("Table '{}' not found", self.table_name))?;
 
-        // Check if this is a system table
-        let is_system_table = crate::catalog::is_system_table(&self.table_name);
-
-        let schema = if is_system_table {
-            // For system tables, get the predefined schema
-            let schema = crate::catalog::get_system_table_schema(&self.table_name)
-                .ok_or_else(|| anyhow::anyhow!("Unknown system table: {}", self.table_name))?;
-
-            // Build output schema based on system table type
+        // Get schema and output schema
+        let (schema, custom_deserializer) = if let Some(ref predefined_schema) = table_info.schema {
+            // System table with predefined schema
             self.output_schema = match self.table_name.as_str() {
                 crate::catalog::CATALOG_TABLE_NAME => vec![
                     ColumnInfo::new("table_id", DataType::Int32),
@@ -62,12 +56,18 @@ impl Executor for SeqScanExecutor {
                     ColumnInfo::new("column_type", DataType::Int32),
                     ColumnInfo::new("column_order", DataType::Int32),
                 ],
-                _ => unreachable!(),
+                _ => {
+                    // Generic system table - build from schema
+                    predefined_schema
+                        .iter()
+                        .enumerate()
+                        .map(|(i, dt)| ColumnInfo::new(&format!("col{}", i), *dt))
+                        .collect()
+                }
             };
-
-            schema
+            (predefined_schema.clone(), table_info.custom_deserializer)
         } else {
-            // For user tables, get schema from catalog
+            // User table - get schema from pg_attribute
             let columns = self
                 .context
                 .catalog
@@ -80,15 +80,18 @@ impl Executor for SeqScanExecutor {
                 .collect();
 
             // Extract just the data types for the scanner
-            columns.into_iter().map(|col| col.column_type).collect()
+            (
+                columns.into_iter().map(|col| col.column_type).collect(),
+                None,
+            )
         };
 
         // Create scanner
-        self.scanner = Some(TableScanner::new_with_name(
+        self.scanner = Some(TableScanner::new(
             (*self.context.buffer_pool).clone(),
             Some(table_info.first_page_id),
             schema,
-            self.table_name.clone(),
+            custom_deserializer,
         ));
 
         self.initialized = true;

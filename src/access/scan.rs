@@ -2,6 +2,7 @@
 
 use crate::access::tuple::TupleId;
 use crate::access::value::{DataType, Value, deserialize_values};
+use crate::catalog::CustomDeserializer;
 use crate::storage::buffer::BufferPoolManager;
 use crate::storage::page::{HeapPage, PageId};
 use anyhow::Result;
@@ -12,7 +13,7 @@ pub struct TableScanner {
     current_page_id: Option<PageId>,
     current_slot: u16,
     schema: Vec<DataType>,
-    table_name: Option<String>, // For system table handling
+    custom_deserializer: Option<CustomDeserializer>,
 }
 
 impl TableScanner {
@@ -21,29 +22,14 @@ impl TableScanner {
         buffer_pool: BufferPoolManager,
         first_page_id: Option<PageId>,
         schema: Vec<DataType>,
+        custom_deserializer: Option<CustomDeserializer>,
     ) -> Self {
         Self {
             buffer_pool,
             current_page_id: first_page_id,
             current_slot: 0,
             schema,
-            table_name: None,
-        }
-    }
-
-    /// Create a new table scanner with table name (for system tables)
-    pub fn new_with_name(
-        buffer_pool: BufferPoolManager,
-        first_page_id: Option<PageId>,
-        schema: Vec<DataType>,
-        table_name: String,
-    ) -> Self {
-        Self {
-            buffer_pool,
-            current_page_id: first_page_id,
-            current_slot: 0,
-            schema,
-            table_name: Some(table_name),
+            custom_deserializer,
         }
     }
 
@@ -75,14 +61,11 @@ impl TableScanner {
             match heap_page.get_tuple(slot_id) {
                 Ok(data) => {
                     // Deserialize the tuple data
-                    let values = if let Some(ref table_name) = self.table_name {
-                        // System table - use custom deserialization
-                        if crate::catalog::is_system_table(table_name) {
-                            crate::catalog::deserialize_system_table_data(table_name, data)?
-                        } else {
-                            deserialize_values(data, &self.schema)?
-                        }
+                    let values = if let Some(deserializer) = self.custom_deserializer {
+                        // Use custom deserializer
+                        deserializer(data)?
                     } else {
+                        // Use standard schema-based deserialization
                         deserialize_values(data, &self.schema)?
                     };
                     let tuple_id = TupleId::new(page_id, slot_id);
@@ -149,7 +132,7 @@ mod tests {
         heap.insert(&data2)?;
 
         // Create scanner starting from the first page
-        let scanner = TableScanner::new(buffer_pool, Some(tid1.page_id), schema);
+        let scanner = TableScanner::new(buffer_pool, Some(tid1.page_id), schema, None);
 
         Ok((scanner, heap))
     }
@@ -187,6 +170,7 @@ mod tests {
             buffer_pool,
             None, // No first page
             vec![DataType::Int32],
+            None,
         );
 
         assert!(scanner.next().is_none());
@@ -243,7 +227,7 @@ mod tests {
         }
 
         // Create scanner and count all tuples
-        let mut scanner = TableScanner::new(buffer_pool, first_page_id, schema);
+        let mut scanner = TableScanner::new(buffer_pool, first_page_id, schema, None);
 
         let mut scanned_count = 0;
         while let Some(result) = scanner.next() {
