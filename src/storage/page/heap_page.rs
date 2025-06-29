@@ -30,8 +30,8 @@ impl<'a> HeapPage<'a> {
         let upper = PAGE_SIZE as u16;
         data[UPPER_OFFSET..UPPER_OFFSET + 2].copy_from_slice(&upper.to_le_bytes());
 
-        // Initialize special area to 0
-        data[SPECIAL_OFFSET..SPECIAL_OFFSET + 4].fill(0);
+        // Initialize special area to 0xFFFFFFFF (no next page)
+        data[SPECIAL_OFFSET..SPECIAL_OFFSET + 4].copy_from_slice(&0xFFFFFFFF_u32.to_le_bytes());
 
         Self { data }
     }
@@ -142,6 +142,35 @@ impl<'a> HeapPage<'a> {
         let upper = self.get_upper();
 
         upper.saturating_sub(lower) as usize
+    }
+
+    pub fn get_next_page_id(&self) -> Option<PageId> {
+        let bytes = [
+            self.data[SPECIAL_OFFSET],
+            self.data[SPECIAL_OFFSET + 1],
+            self.data[SPECIAL_OFFSET + 2],
+            self.data[SPECIAL_OFFSET + 3],
+        ];
+        let next_page_id = u32::from_le_bytes(bytes);
+
+        // 0xFFFFFFFF means no next page
+        if next_page_id == 0xFFFFFFFF {
+            None
+        } else {
+            Some(PageId(next_page_id))
+        }
+    }
+
+    pub fn set_next_page_id(&mut self, next_page_id: Option<PageId>) {
+        let value = match next_page_id {
+            Some(PageId(id)) => id,
+            None => 0xFFFFFFFF,
+        };
+        self.data[SPECIAL_OFFSET..SPECIAL_OFFSET + 4].copy_from_slice(&value.to_le_bytes());
+    }
+
+    pub fn required_space_for(data_len: usize) -> usize {
+        data_len + SLOT_SIZE
     }
 }
 
@@ -265,5 +294,31 @@ mod tests {
         }
 
         Ok(())
+    }
+
+    #[test]
+    fn test_next_page_id() -> Result<()> {
+        let mut data = Box::new([0u8; PAGE_SIZE]);
+        let mut page = HeapPage::new(&mut data, PageId(1));
+
+        // Initially no next page
+        assert_eq!(page.get_next_page_id(), None);
+
+        // Set next page
+        page.set_next_page_id(Some(PageId(5)));
+        assert_eq!(page.get_next_page_id(), Some(PageId(5)));
+
+        // Set to None again
+        page.set_next_page_id(None);
+        assert_eq!(page.get_next_page_id(), None);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_required_space_for() {
+        assert_eq!(HeapPage::required_space_for(10), 14); // 10 + 4 (SLOT_SIZE)
+        assert_eq!(HeapPage::required_space_for(100), 104);
+        assert_eq!(HeapPage::required_space_for(0), 4);
     }
 }

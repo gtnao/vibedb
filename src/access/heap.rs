@@ -8,7 +8,8 @@ pub type TableId = u32;
 /// Manages a table that spans multiple heap pages
 pub struct TableHeap {
     buffer_pool: BufferPoolManager,
-    _table_id: TableId, // Will be used for multi-table support
+    _table_id: TableId,            // Will be used for multi-table support
+    first_page_id: Option<PageId>, // First page of the table
 }
 
 impl TableHeap {
@@ -16,51 +17,82 @@ impl TableHeap {
         Self {
             buffer_pool,
             _table_id: table_id,
+            first_page_id: None,
+        }
+    }
+
+    pub fn with_first_page(
+        buffer_pool: BufferPoolManager,
+        table_id: TableId,
+        first_page_id: PageId,
+    ) -> Self {
+        Self {
+            buffer_pool,
+            _table_id: table_id,
+            first_page_id: Some(first_page_id),
         }
     }
 
     /// Insert a tuple into the table
     pub fn insert(&mut self, data: &[u8]) -> Result<TupleId> {
-        // Try existing pages first
-        let mut page_id = PageId(0);
-        loop {
-            // Try to fetch the page
-            match self.buffer_pool.fetch_page_write(page_id) {
-                Ok(mut guard) => {
-                    let mut heap_page = HeapPage::from_data(&mut guard);
+        let required_space = HeapPage::required_space_for(data.len());
 
-                    // Check if there's enough space
-                    if heap_page.get_free_space() >= data.len() + 4 {
-                        // 4 bytes for slot
-                        let slot_id = heap_page.insert_tuple(data)?;
-                        return Ok(TupleId::new(page_id, slot_id));
-                    }
-                    // Not enough space, try next page
+        // If we have a first page, start from there
+        if let Some(mut current_page_id) = self.first_page_id {
+            while let Ok(mut guard) = self.buffer_pool.fetch_page_write(current_page_id) {
+                let mut heap_page = HeapPage::from_data(&mut guard);
+
+                // Check if there's enough space
+                if heap_page.get_free_space() >= required_space {
+                    let slot_id = heap_page.insert_tuple(data)?;
+                    return Ok(TupleId::new(current_page_id, slot_id));
                 }
-                Err(_) => {
-                    // Page doesn't exist, create a new one
-                    break;
+
+                // Not enough space, check next page
+                match heap_page.get_next_page_id() {
+                    Some(next_page_id) => {
+                        current_page_id = next_page_id;
+                    }
+                    None => {
+                        // No next page, need to create one
+                        let (new_page_id, mut new_guard) = self.buffer_pool.new_page()?;
+                        let mut new_heap_page = HeapPage::new(&mut new_guard, new_page_id);
+                        let slot_id = new_heap_page.insert_tuple(data)?;
+
+                        // Link the pages (drop not needed, just reassign)
+                        let mut prev_page = HeapPage::from_data(&mut guard);
+                        prev_page.set_next_page_id(Some(new_page_id));
+
+                        return Ok(TupleId::new(new_page_id, slot_id));
+                    }
                 }
             }
-
-            // Move to next page
-            page_id = PageId(page_id.0 + 1);
         }
 
-        // No existing page has space, create a new page
+        // No existing pages, create the first page
         let (new_page_id, mut guard) = self.buffer_pool.new_page()?;
         let mut heap_page = HeapPage::new(&mut guard, new_page_id);
         let slot_id = heap_page.insert_tuple(data)?;
 
+        // Update first_page_id if this is the first page
+        if self.first_page_id.is_none() {
+            self.first_page_id = Some(new_page_id);
+        }
+
         Ok(TupleId::new(new_page_id, slot_id))
     }
 
-    /// Get a tuple by its ID
+    /// Get a tuple by its ID (zero-copy implementation)
     pub fn get(&self, tuple_id: TupleId) -> Result<Option<Tuple>> {
         let guard = self.buffer_pool.fetch_page(tuple_id.page_id)?;
-        let mut data_copy = [0u8; crate::storage::PAGE_SIZE];
-        data_copy.copy_from_slice(&guard[..]);
-        let heap_page = HeapPage::from_data(&mut data_copy);
+
+        // Create a temporary HeapPage view without copying
+        let page_data = unsafe {
+            std::slice::from_raw_parts_mut(guard.as_ptr() as *mut u8, crate::storage::PAGE_SIZE)
+        };
+        let page_array =
+            unsafe { &mut *(page_data.as_mut_ptr() as *mut [u8; crate::storage::PAGE_SIZE]) };
+        let heap_page = HeapPage::from_data(page_array);
 
         match heap_page.get_tuple(tuple_id.slot_id) {
             Ok(data) => Ok(Some(Tuple::new(tuple_id, data.to_vec()))),
