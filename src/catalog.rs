@@ -1,216 +1,18 @@
-use crate::access::{DataType, TableHeap, Value};
+// Submodule declarations
+pub mod column_info;
+pub mod system_tables;
+pub mod table_info;
+
+use crate::access::{DataType, TableHeap};
 use crate::storage::buffer::BufferPoolManager;
-use crate::storage::page::PageId;
 use anyhow::{Result, bail};
 use std::collections::HashMap;
 use std::sync::RwLock;
 
-pub type TableId = u32;
-
-/// Type alias for custom deserializer function
-pub type CustomDeserializer = fn(&[u8]) -> Result<Vec<Value>>;
-
-pub const CATALOG_TABLE_ID: TableId = 1;
-pub const CATALOG_FIRST_PAGE: PageId = PageId(0);
-pub const CATALOG_TABLE_NAME: &str = "pg_tables";
-
-pub const CATALOG_ATTR_TABLE_ID: TableId = 2;
-pub const CATALOG_ATTR_TABLE_NAME: &str = "pg_attribute";
-
-/// Deserializer for pg_tables
-fn deserialize_pg_tables(data: &[u8]) -> Result<Vec<Value>> {
-    let table_info = TableInfo::deserialize(data)?;
-    Ok(table_info.to_values())
-}
-
-/// Deserializer for pg_attribute  
-fn deserialize_pg_attribute(data: &[u8]) -> Result<Vec<Value>> {
-    let attr_row = AttributeRow::deserialize(data)?;
-    Ok(attr_row.to_values())
-}
-
-#[derive(Debug, Clone)]
-pub struct TableInfo {
-    pub table_id: TableId,
-    pub table_name: String,
-    pub first_page_id: PageId,
-    /// Schema for this table (None means it should be loaded from pg_attribute)
-    pub schema: Option<Vec<DataType>>,
-    /// Column names for this table (None means it should be loaded from pg_attribute)
-    pub column_names: Option<Vec<String>>,
-    /// Custom deserializer for this table (None means use standard schema-based deserialization)
-    pub custom_deserializer: Option<CustomDeserializer>,
-}
-
-impl TableInfo {
-    fn serialize(&self) -> Vec<u8> {
-        let mut data = Vec::new();
-        data.extend_from_slice(&self.table_id.to_le_bytes());
-        data.extend_from_slice(&(self.table_name.len() as u32).to_le_bytes());
-        data.extend_from_slice(self.table_name.as_bytes());
-        data.extend_from_slice(&self.first_page_id.0.to_le_bytes());
-        data
-    }
-
-    /// Convert to Values for scanning
-    pub fn to_values(&self) -> Vec<Value> {
-        vec![
-            Value::Int32(self.table_id as i32),
-            Value::String(self.table_name.clone()),
-            Value::Int32(self.first_page_id.0 as i32),
-        ]
-    }
-
-    fn deserialize(data: &[u8]) -> Result<Self> {
-        if data.len() < 8 {
-            bail!("Invalid table info data: too short");
-        }
-
-        let mut offset = 0;
-
-        // Read table_id
-        let table_id = u32::from_le_bytes([
-            data[offset],
-            data[offset + 1],
-            data[offset + 2],
-            data[offset + 3],
-        ]);
-        offset += 4;
-
-        // Read table_name length
-        let name_len = u32::from_le_bytes([
-            data[offset],
-            data[offset + 1],
-            data[offset + 2],
-            data[offset + 3],
-        ]) as usize;
-        offset += 4;
-
-        // Read table_name
-        if data.len() < offset + name_len + 4 {
-            bail!("Invalid table info data: name too long");
-        }
-        let table_name = String::from_utf8(data[offset..offset + name_len].to_vec())?;
-        offset += name_len;
-
-        // Read first_page_id
-        let first_page_id = PageId(u32::from_le_bytes([
-            data[offset],
-            data[offset + 1],
-            data[offset + 2],
-            data[offset + 3],
-        ]));
-
-        Ok(TableInfo {
-            table_id,
-            table_name,
-            first_page_id,
-            schema: None,
-            column_names: None,
-            custom_deserializer: None,
-        })
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ColumnInfo {
-    pub column_name: String,
-    pub column_type: DataType,
-    pub column_order: u32,
-}
-
-impl ColumnInfo {
-    fn serialize(&self) -> Vec<u8> {
-        let mut data = Vec::new();
-        data.extend_from_slice(&(self.column_name.len() as u32).to_le_bytes());
-        data.extend_from_slice(self.column_name.as_bytes());
-        data.push(self.column_type as u8);
-        data.extend_from_slice(&self.column_order.to_le_bytes());
-        data
-    }
-
-    fn deserialize(data: &[u8]) -> Result<Self> {
-        if data.len() < 9 {
-            bail!("Invalid column info data: too short");
-        }
-
-        let mut offset = 0;
-
-        // Read column_name length
-        let name_len = u32::from_le_bytes([
-            data[offset],
-            data[offset + 1],
-            data[offset + 2],
-            data[offset + 3],
-        ]) as usize;
-        offset += 4;
-
-        // Read column_name
-        if data.len() < offset + name_len + 5 {
-            bail!("Invalid column info data: name too long");
-        }
-        let column_name = String::from_utf8(data[offset..offset + name_len].to_vec())?;
-        offset += name_len;
-
-        // Read column_type
-        let column_type = DataType::from_u8(data[offset])?;
-        offset += 1;
-
-        // Read column_order
-        let column_order = u32::from_le_bytes([
-            data[offset],
-            data[offset + 1],
-            data[offset + 2],
-            data[offset + 3],
-        ]);
-
-        Ok(ColumnInfo {
-            column_name,
-            column_type,
-            column_order,
-        })
-    }
-}
-
-/// Represents a pg_attribute row
-struct AttributeRow {
-    table_id: TableId,
-    column_info: ColumnInfo,
-}
-
-impl AttributeRow {
-    fn serialize(&self) -> Vec<u8> {
-        let mut data = Vec::new();
-        data.extend_from_slice(&self.table_id.to_le_bytes());
-        data.extend_from_slice(&self.column_info.serialize());
-        data
-    }
-
-    /// Convert to Values for scanning
-    fn to_values(&self) -> Vec<Value> {
-        vec![
-            Value::Int32(self.table_id as i32),
-            Value::String(self.column_info.column_name.clone()),
-            Value::Int32(self.column_info.column_type as u8 as i32),
-            Value::Int32(self.column_info.column_order as i32),
-        ]
-    }
-
-    fn deserialize(data: &[u8]) -> Result<Self> {
-        if data.len() < 4 {
-            bail!("Invalid attribute row data: too short");
-        }
-
-        let table_id = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
-
-        let column_info = ColumnInfo::deserialize(&data[4..])?;
-
-        Ok(AttributeRow {
-            table_id,
-            column_info,
-        })
-    }
-}
+// Re-export commonly used types
+pub use column_info::{AttributeRow, ColumnInfo};
+pub use system_tables::*;
+pub use table_info::{CustomDeserializer, TableId, TableInfo};
 
 pub struct Catalog {
     buffer_pool: BufferPoolManager,
@@ -346,30 +148,15 @@ impl Catalog {
 
         // Set up pg_tables metadata
         let mut catalog_info_with_meta = catalog_info;
-        catalog_info_with_meta.schema =
-            Some(vec![DataType::Int32, DataType::Varchar, DataType::Int32]);
-        catalog_info_with_meta.column_names = Some(vec![
-            "table_id".to_string(),
-            "table_name".to_string(),
-            "first_page_id".to_string(),
-        ]);
+        catalog_info_with_meta.schema = Some(pg_tables_schema());
+        catalog_info_with_meta.column_names = Some(pg_tables_column_names());
         catalog_info_with_meta.custom_deserializer = Some(deserialize_pg_tables);
         initial_table_cache.insert(CATALOG_TABLE_NAME.to_string(), catalog_info_with_meta);
 
         // Set up pg_attribute metadata
         let mut attr_info_with_meta = attr_table_info;
-        attr_info_with_meta.schema = Some(vec![
-            DataType::Int32,
-            DataType::Varchar,
-            DataType::Int32,
-            DataType::Int32,
-        ]);
-        attr_info_with_meta.column_names = Some(vec![
-            "table_id".to_string(),
-            "column_name".to_string(),
-            "column_type".to_string(),
-            "column_order".to_string(),
-        ]);
+        attr_info_with_meta.schema = Some(pg_attribute_schema());
+        attr_info_with_meta.column_names = Some(pg_attribute_column_names());
         attr_info_with_meta.custom_deserializer = Some(deserialize_pg_attribute);
         initial_table_cache.insert(CATALOG_ATTR_TABLE_NAME.to_string(), attr_info_with_meta);
 
@@ -437,28 +224,14 @@ impl Catalog {
 
         // Set metadata for system tables
         if let Some(pg_tables_info) = table_cache.get_mut(CATALOG_TABLE_NAME) {
-            pg_tables_info.schema = Some(vec![DataType::Int32, DataType::Varchar, DataType::Int32]);
-            pg_tables_info.column_names = Some(vec![
-                "table_id".to_string(),
-                "table_name".to_string(),
-                "first_page_id".to_string(),
-            ]);
+            pg_tables_info.schema = Some(pg_tables_schema());
+            pg_tables_info.column_names = Some(pg_tables_column_names());
             pg_tables_info.custom_deserializer = Some(deserialize_pg_tables);
         }
 
         if let Some(pg_attribute_info) = table_cache.get_mut(CATALOG_ATTR_TABLE_NAME) {
-            pg_attribute_info.schema = Some(vec![
-                DataType::Int32,
-                DataType::Varchar,
-                DataType::Int32,
-                DataType::Int32,
-            ]);
-            pg_attribute_info.column_names = Some(vec![
-                "table_id".to_string(),
-                "column_name".to_string(),
-                "column_type".to_string(),
-                "column_order".to_string(),
-            ]);
+            pg_attribute_info.schema = Some(pg_attribute_schema());
+            pg_attribute_info.column_names = Some(pg_attribute_column_names());
             pg_attribute_info.custom_deserializer = Some(deserialize_pg_attribute);
         }
 
@@ -701,27 +474,6 @@ mod tests {
         let replacer = Box::new(crate::storage::buffer::lru::LruReplacer::new(10));
         let buffer_pool = BufferPoolManager::new(page_manager, replacer, 10);
         Catalog::initialize(buffer_pool)
-    }
-
-    #[test]
-    fn test_table_info_serialization() -> Result<()> {
-        let info = TableInfo {
-            table_id: 42,
-            table_name: "test_table".to_string(),
-            first_page_id: PageId(123),
-            schema: None,
-            column_names: None,
-            custom_deserializer: None,
-        };
-
-        let serialized = info.serialize();
-        let deserialized = TableInfo::deserialize(&serialized)?;
-
-        assert_eq!(info.table_id, deserialized.table_id);
-        assert_eq!(info.table_name, deserialized.table_name);
-        assert_eq!(info.first_page_id, deserialized.first_page_id);
-
-        Ok(())
     }
 
     #[test]

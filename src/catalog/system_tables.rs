@@ -1,0 +1,60 @@
+//! System table definitions and utilities.
+
+use crate::access::{DataType, Value};
+use crate::catalog::column_info::AttributeRow;
+use crate::catalog::table_info::{TableId, TableInfo};
+use crate::storage::page::PageId;
+use anyhow::Result;
+
+pub const CATALOG_TABLE_ID: TableId = 1;
+pub const CATALOG_FIRST_PAGE: PageId = PageId(0);
+pub const CATALOG_TABLE_NAME: &str = "pg_tables";
+
+pub const CATALOG_ATTR_TABLE_ID: TableId = 2;
+pub const CATALOG_ATTR_TABLE_NAME: &str = "pg_attribute";
+
+/// Deserializer for pg_tables
+pub fn deserialize_pg_tables(data: &[u8]) -> Result<Vec<Value>> {
+    let table_info = TableInfo::deserialize(data)?;
+    Ok(table_info.to_values())
+}
+
+/// Deserializer for pg_attribute  
+pub fn deserialize_pg_attribute(data: &[u8]) -> Result<Vec<Value>> {
+    let attr_row = AttributeRow::deserialize(data)?;
+    Ok(attr_row.to_values())
+}
+
+/// Get schema for pg_tables
+pub fn pg_tables_schema() -> Vec<DataType> {
+    vec![DataType::Int32, DataType::Varchar, DataType::Int32]
+}
+
+/// Get column names for pg_tables
+pub fn pg_tables_column_names() -> Vec<String> {
+    vec![
+        "table_id".to_string(),
+        "table_name".to_string(),
+        "first_page_id".to_string(),
+    ]
+}
+
+/// Get schema for pg_attribute
+pub fn pg_attribute_schema() -> Vec<DataType> {
+    vec![
+        DataType::Int32,
+        DataType::Varchar,
+        DataType::Int32,
+        DataType::Int32,
+    ]
+}
+
+/// Get column names for pg_attribute
+pub fn pg_attribute_column_names() -> Vec<String> {
+    vec![
+        "table_id".to_string(),
+        "column_name".to_string(),
+        "column_type".to_string(),
+        "column_order".to_string(),
+    ]
+}
