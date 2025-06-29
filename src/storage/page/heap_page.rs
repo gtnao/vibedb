@@ -1,6 +1,6 @@
 use crate::storage::PAGE_SIZE;
+use crate::storage::error::{StorageError, StorageResult};
 use crate::storage::page::{Page, PageId};
-use anyhow::{Result, bail};
 
 // Header structure (20 bytes) - PostgreSQL style
 const HEADER_SIZE: usize = 20;
@@ -40,10 +40,14 @@ impl<'a> HeapPage<'a> {
         Self { data }
     }
 
-    pub fn insert_tuple(&mut self, tuple_data: &[u8]) -> Result<u16> {
+    pub fn insert_tuple(&mut self, tuple_data: &[u8]) -> StorageResult<u16> {
         let tuple_size = tuple_data.len();
         if tuple_size > u16::MAX as usize {
-            bail!("Tuple size too large");
+            return Err(StorageError::Other(format!(
+                "Tuple size {} exceeds maximum {}",
+                tuple_size,
+                u16::MAX
+            )));
         }
 
         let lower = self.get_lower();
@@ -54,7 +58,10 @@ impl<'a> HeapPage<'a> {
         let required_space = tuple_size + SLOT_SIZE;
         let available_space = (upper - lower) as usize;
         if available_space < required_space {
-            bail!("Not enough space in page");
+            return Err(StorageError::PageFull {
+                required: required_space,
+                available: available_space,
+            });
         }
 
         // Write tuple data (from upper, growing up)
@@ -74,10 +81,13 @@ impl<'a> HeapPage<'a> {
         Ok(tuple_count)
     }
 
-    pub fn get_tuple(&self, slot_id: u16) -> Result<&[u8]> {
+    pub fn get_tuple(&self, slot_id: u16) -> StorageResult<&[u8]> {
         let tuple_count = self.get_tuple_count();
         if slot_id >= tuple_count {
-            bail!("Invalid slot id");
+            return Err(StorageError::InvalidSlotId {
+                slot_id,
+                max_slot: tuple_count.saturating_sub(1),
+            });
         }
 
         // Slots are now at the beginning, after header
@@ -87,16 +97,19 @@ impl<'a> HeapPage<'a> {
             u16::from_le_bytes([self.data[slot_offset + 2], self.data[slot_offset + 3]]);
 
         if tuple_offset == 0 && tuple_length == 0 {
-            bail!("Tuple has been deleted");
+            return Err(StorageError::TupleNotFound { slot_id });
         }
 
         Ok(&self.data[tuple_offset as usize..(tuple_offset + tuple_length) as usize])
     }
 
-    pub fn delete_tuple(&mut self, slot_id: u16) -> Result<()> {
+    pub fn delete_tuple(&mut self, slot_id: u16) -> StorageResult<()> {
         let tuple_count = self.get_tuple_count();
         if slot_id >= tuple_count {
-            bail!("Invalid slot id");
+            return Err(StorageError::InvalidSlotId {
+                slot_id,
+                max_slot: tuple_count.saturating_sub(1),
+            });
         }
 
         // Mark slot as deleted (offset = 0, length = 0)
@@ -194,6 +207,7 @@ impl<'a> Page for HeapPage<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Result;
 
     #[test]
     fn test_heap_page_initialization() {
@@ -214,15 +228,27 @@ mod tests {
         let mut page = HeapPage::new(&mut data, PageId(1));
 
         let tuple1 = b"Hello, World!";
-        let slot1 = page.insert_tuple(tuple1)?;
+        let slot1 = page
+            .insert_tuple(tuple1)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         assert_eq!(slot1, 0);
 
         let tuple2 = b"Second tuple";
-        let slot2 = page.insert_tuple(tuple2)?;
+        let slot2 = page
+            .insert_tuple(tuple2)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         assert_eq!(slot2, 1);
 
-        assert_eq!(page.get_tuple(slot1)?, tuple1);
-        assert_eq!(page.get_tuple(slot2)?, tuple2);
+        assert_eq!(
+            page.get_tuple(slot1)
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?,
+            tuple1
+        );
+        assert_eq!(
+            page.get_tuple(slot2)
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?,
+            tuple2
+        );
         assert_eq!(page.get_tuple_count(), 2);
 
         Ok(())

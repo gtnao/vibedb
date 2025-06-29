@@ -13,6 +13,7 @@
 
 pub mod buffer;
 pub mod disk;
+pub mod error;
 pub mod page;
 
 pub use buffer::{BufferPoolManager, PageReadGuard, PageWriteGuard};

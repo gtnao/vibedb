@@ -91,14 +91,9 @@ impl TableHeap {
 
         match heap_page.get_tuple(tuple_id.slot_id) {
             Ok(data) => Ok(Some(Tuple::new(tuple_id, data.to_vec()))),
-            Err(e) => {
-                // Check if it's a "tuple deleted" error or "invalid slot" error
-                if e.to_string().contains("deleted") || e.to_string().contains("Invalid slot") {
-                    Ok(None)
-                } else {
-                    Err(e)
-                }
-            }
+            Err(crate::storage::error::StorageError::TupleNotFound { .. }) => Ok(None),
+            Err(crate::storage::error::StorageError::InvalidSlotId { .. }) => Ok(None),
+            Err(e) => Err(e.into()),
         }
     }
 

@@ -185,18 +185,7 @@ impl Catalog {
             match buffer_pool.fetch_page(page_id) {
                 Ok(guard) => {
                     // Create a temporary HeapPage view
-                    // SAFETY: Same safety guarantees as in TableHeap::get()
-                    // The guard ensures the page stays in memory during this operation
-                    let page_data = unsafe {
-                        std::slice::from_raw_parts_mut(
-                            guard.as_ptr() as *mut u8,
-                            crate::storage::PAGE_SIZE,
-                        )
-                    };
-                    let page_array = unsafe {
-                        &mut *(page_data.as_mut_ptr() as *mut [u8; crate::storage::PAGE_SIZE])
-                    };
-                    let heap_page = crate::storage::page::HeapPage::from_data(page_array);
+                    let heap_page = crate::storage::page::utils::heap_page_from_guard(&guard);
 
                     // Scan all tuples in this page
                     let tuple_count = heap_page.get_tuple_count();
@@ -272,18 +261,7 @@ impl Catalog {
             match self.buffer_pool.fetch_page(page_id) {
                 Ok(guard) => {
                     // Create a temporary HeapPage view
-                    // SAFETY: Same safety guarantees as in TableHeap::get()
-                    // The guard ensures the page stays in memory during this operation
-                    let page_data = unsafe {
-                        std::slice::from_raw_parts_mut(
-                            guard.as_ptr() as *mut u8,
-                            crate::storage::PAGE_SIZE,
-                        )
-                    };
-                    let page_array = unsafe {
-                        &mut *(page_data.as_mut_ptr() as *mut [u8; crate::storage::PAGE_SIZE])
-                    };
-                    let heap_page = crate::storage::page::HeapPage::from_data(page_array);
+                    let heap_page = crate::storage::page::utils::heap_page_from_guard(&guard);
 
                     // Scan all tuples in this page
                     let tuple_count = heap_page.get_tuple_count();
@@ -409,16 +387,7 @@ impl Catalog {
         while let Some(page_id) = current_page_id {
             match self.buffer_pool.fetch_page(page_id) {
                 Ok(guard) => {
-                    let page_data = unsafe {
-                        std::slice::from_raw_parts_mut(
-                            guard.as_ptr() as *mut u8,
-                            crate::storage::PAGE_SIZE,
-                        )
-                    };
-                    let page_array = unsafe {
-                        &mut *(page_data.as_mut_ptr() as *mut [u8; crate::storage::PAGE_SIZE])
-                    };
-                    let heap_page = crate::storage::page::HeapPage::from_data(page_array);
+                    let heap_page = crate::storage::page::utils::heap_page_from_guard(&guard);
 
                     let tuple_count = heap_page.get_tuple_count();
                     for slot_id in 0..tuple_count {

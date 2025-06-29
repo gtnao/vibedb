@@ -35,52 +35,52 @@ impl TableScanner {
 
     /// Try to get the next tuple from the current page
     fn try_next_tuple(&mut self) -> Result<Option<(TupleId, Vec<Value>)>> {
-        let page_id = match self.current_page_id {
-            Some(id) => id,
-            None => return Ok(None),
-        };
+        loop {
+            let page_id = match self.current_page_id {
+                Some(id) => id,
+                None => return Ok(None),
+            };
 
-        let guard = self.buffer_pool.fetch_page(page_id)?;
+            let guard = self.buffer_pool.fetch_page(page_id)?;
 
-        // Create a temporary HeapPage view
-        let heap_page = crate::storage::page::utils::heap_page_from_guard(&guard);
+            // Create a temporary HeapPage view
+            let heap_page = crate::storage::page::utils::heap_page_from_guard(&guard);
 
-        let tuple_count = heap_page.get_tuple_count();
+            let tuple_count = heap_page.get_tuple_count();
 
-        // Try to find a valid tuple starting from current_slot
-        while self.current_slot < tuple_count {
-            let slot_id = self.current_slot;
-            self.current_slot += 1;
+            // Try to find a valid tuple starting from current_slot
+            while self.current_slot < tuple_count {
+                let slot_id = self.current_slot;
+                self.current_slot += 1;
 
-            match heap_page.get_tuple(slot_id) {
-                Ok(data) => {
-                    // Deserialize the tuple data
-                    let values = if let Some(deserializer) = self.custom_deserializer {
-                        // Use custom deserializer
-                        deserializer(data)?
-                    } else {
-                        // Use standard schema-based deserialization
-                        deserialize_values(data, &self.schema)?
-                    };
-                    let tuple_id = TupleId::new(page_id, slot_id);
-                    return Ok(Some((tuple_id, values)));
-                }
-                Err(_) => {
-                    // Skip deleted or invalid tuples
-                    continue;
+                match heap_page.get_tuple(slot_id) {
+                    Ok(data) => {
+                        // Deserialize the tuple data
+                        let values = if let Some(deserializer) = self.custom_deserializer {
+                            // Use custom deserializer
+                            deserializer(data)?
+                        } else {
+                            // Use standard schema-based deserialization
+                            deserialize_values(data, &self.schema)?
+                        };
+                        let tuple_id = TupleId::new(page_id, slot_id);
+                        return Ok(Some((tuple_id, values)));
+                    }
+                    Err(_) => {
+                        // Skip deleted or invalid tuples
+                        continue;
+                    }
                 }
             }
-        }
 
-        // No more valid tuples on this page, try next page
-        self.current_page_id = heap_page.get_next_page_id();
-        self.current_slot = 0;
+            // No more valid tuples on this page, try next page
+            self.current_page_id = heap_page.get_next_page_id();
+            self.current_slot = 0;
 
-        // If we moved to a new page, recurse to try getting a tuple from it
-        if self.current_page_id.is_some() {
-            self.try_next_tuple()
-        } else {
-            Ok(None)
+            // Continue loop if we have a next page, otherwise return None
+            if self.current_page_id.is_none() {
+                return Ok(None);
+            }
         }
     }
 }

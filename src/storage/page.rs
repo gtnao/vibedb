@@ -6,6 +6,12 @@ use crate::storage::PAGE_SIZE;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PageId(pub u32);
 
+impl std::fmt::Display for PageId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "PageId({})", self.0)
+    }
+}
+
 pub trait Page {
     fn page_id(&self) -> PageId;
     fn data(&self) -> &[u8; PAGE_SIZE];
