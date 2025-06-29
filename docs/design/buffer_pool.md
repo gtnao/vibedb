@@ -156,3 +156,12 @@ pub trait Replacer: Send + Sync {
    - スロットエントリをlowerから下向きに追加
    - lower += 4、upper -= タプルサイズ
 3. **空き容量チェック**: `upper - lower >= 必要サイズ`
+
+## 上位層との関係
+
+BufferPoolManagerとHeapPageは、[Access層](access.md)によって以下のように活用されます：
+
+- **BufferPoolManager**: TableHeapが内部的に使用してページアクセスを管理
+- **PageGuard**: Access層でも安全なページアクセスを保証
+- **HeapPage**: Tupleの物理的格納形式として使用
+- **空きページ探索**: TableHeapがinsert時に適切なページを選択

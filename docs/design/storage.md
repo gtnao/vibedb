@@ -52,11 +52,19 @@ anyhow::Resultを使用した統一的なエラーハンドリング：
 
 詳細は[Buffer Pool Design](buffer_pool.md#heappage構造)を参照。
 
+## 上位層との関係
+
+Storage層は、[Access層](access.md)によって抽象化されます：
+- **PageManager/BufferPoolManager** → TableHeapがページ境界を隠蔽
+- **HeapPage** → Tupleとして論理的に解釈
+- **PageId** → TupleId (PageId + SlotId) の一部として使用
+
 ## 将来の拡張性
 
 1. **BufferPoolManager**: メモリ上でのページキャッシュ ✅ 実装済み
-2. **WAL (Write-Ahead Logging)**: トランザクションログ
-3. **複数ファイル対応**: テーブルスペースの概念
-4. **並行アクセス**: 読み込みの並列化
-5. **インデックスページ**: B+木などのインデックス構造
-6. **FSMページ**: Free Space Map for efficient space management
+2. **Access層**: テーブル抽象化層 🚧 実装中
+3. **WAL (Write-Ahead Logging)**: トランザクションログ
+4. **複数ファイル対応**: テーブルスペースの概念
+5. **並行アクセス**: 読み込みの並列化
+6. **インデックスページ**: B+木などのインデックス構造
+7. **FSMページ**: Free Space Map for efficient space management
