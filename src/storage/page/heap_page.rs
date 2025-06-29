@@ -132,8 +132,11 @@ impl<'a> HeapPage<'a> {
         self.data[UPPER_OFFSET..UPPER_OFFSET + 2].copy_from_slice(&upper.to_le_bytes());
     }
 
-    fn get_tuple_count(&self) -> u16 {
+    pub fn get_tuple_count(&self) -> u16 {
         let lower = self.get_lower();
+        if lower < HEADER_SIZE as u16 {
+            return 0;
+        }
         (lower - HEADER_SIZE as u16) / SLOT_SIZE as u16
     }
 
