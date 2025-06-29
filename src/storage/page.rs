@@ -1,4 +1,5 @@
 pub mod heap_page;
+pub mod utils;
 
 use crate::storage::PAGE_SIZE;
 

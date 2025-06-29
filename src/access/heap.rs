@@ -1,10 +1,9 @@
 use crate::access::tuple::{Tuple, TupleId};
 use crate::access::value::{DataType, Value, serialize_values};
+use crate::catalog::TableId;
 use crate::storage::buffer::BufferPoolManager;
 use crate::storage::page::{HeapPage, PageId};
 use anyhow::Result;
-
-pub type TableId = u32;
 
 /// Manages a table that spans multiple heap pages
 pub struct TableHeap {
@@ -88,17 +87,7 @@ impl TableHeap {
         let guard = self.buffer_pool.fetch_page(tuple_id.page_id)?;
 
         // Create a temporary HeapPage view without copying
-        // SAFETY: This is safe because:
-        // 1. The guard ensures the page remains in memory and won't be evicted
-        // 2. We're creating a temporary view that doesn't outlive the guard
-        // 3. We cast to *mut for the slice API, but only read from it
-        // 4. PAGE_SIZE is guaranteed to match the actual page size
-        let page_data = unsafe {
-            std::slice::from_raw_parts_mut(guard.as_ptr() as *mut u8, crate::storage::PAGE_SIZE)
-        };
-        let page_array =
-            unsafe { &mut *(page_data.as_mut_ptr() as *mut [u8; crate::storage::PAGE_SIZE]) };
-        let heap_page = HeapPage::from_data(page_array);
+        let heap_page = crate::storage::page::utils::heap_page_from_guard(&guard);
 
         match heap_page.get_tuple(tuple_id.slot_id) {
             Ok(data) => Ok(Some(Tuple::new(tuple_id, data.to_vec()))),

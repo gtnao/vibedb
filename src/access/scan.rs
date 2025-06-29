@@ -4,7 +4,7 @@ use crate::access::tuple::TupleId;
 use crate::access::value::{DataType, Value, deserialize_values};
 use crate::catalog::CustomDeserializer;
 use crate::storage::buffer::BufferPoolManager;
-use crate::storage::page::{HeapPage, PageId};
+use crate::storage::page::PageId;
 use anyhow::Result;
 
 /// Iterator for scanning all tuples in a table
@@ -43,13 +43,7 @@ impl TableScanner {
         let guard = self.buffer_pool.fetch_page(page_id)?;
 
         // Create a temporary HeapPage view
-        // SAFETY: Same as TableHeap::get() - guard ensures page stays in memory
-        let page_data = unsafe {
-            std::slice::from_raw_parts_mut(guard.as_ptr() as *mut u8, crate::storage::PAGE_SIZE)
-        };
-        let page_array =
-            unsafe { &mut *(page_data.as_mut_ptr() as *mut [u8; crate::storage::PAGE_SIZE]) };
-        let heap_page = HeapPage::from_data(page_array);
+        let heap_page = crate::storage::page::utils::heap_page_from_guard(&guard);
 
         let tuple_count = heap_page.get_tuple_count();
 
