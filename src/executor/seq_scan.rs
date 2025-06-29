@@ -243,33 +243,38 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "System tables use custom serialization format"]
     fn test_seq_scan_system_tables() -> Result<()> {
-        // TODO: Implement proper handling for system table serialization
-        // System tables (pg_tables, pg_attribute) use their own custom
-        // serialization format, not the schema-based format used by user tables.
-        // This needs special handling in the executor.
-
+        // System tables now use SystemSeqScanExecutor
         let dir = tempdir()?;
         let db_path = dir.path().join("test.db");
-        let db = Database::create(&db_path)?;
+        let mut db = Database::create(&db_path)?;
+
+        // Create some user tables to make the test more interesting
+        db.create_table("users")?;
+        db.create_table_with_columns(
+            "products",
+            vec![("id", DataType::Int32), ("name", DataType::Varchar)],
+        )?;
 
         // Create context
         let context = ExecutionContext::new(db.catalog.clone(), db.buffer_pool.clone());
 
+        // For system tables, we should use SystemSeqScanExecutor
+        use crate::executor::SystemSeqScanExecutor;
+
         // Scan pg_tables
-        let mut executor = SeqScanExecutor::new("pg_tables".to_string(), context.clone());
+        let mut executor = SystemSeqScanExecutor::new("pg_tables".to_string(), context.clone());
         executor.init()?;
 
-        // Should have at least 2 system tables
+        // Should have at least 2 system tables + 2 user tables
         let mut count = 0;
         while let Some(_) = executor.next()? {
             count += 1;
         }
-        assert!(count >= 2);
+        assert!(count >= 4);
 
         // Scan pg_attribute
-        let mut executor2 = SeqScanExecutor::new("pg_attribute".to_string(), context);
+        let mut executor2 = SystemSeqScanExecutor::new("pg_attribute".to_string(), context);
         executor2.init()?;
 
         // Should have multiple attribute entries

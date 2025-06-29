@@ -12,10 +12,12 @@ use std::sync::Arc;
 
 pub mod insert;
 pub mod seq_scan;
+pub mod system_scan;
 
 // Re-export executors
 pub use insert::InsertExecutor;
 pub use seq_scan::SeqScanExecutor;
+pub use system_scan::{SystemSeqScanExecutor, SystemTableScanner};
 
 /// Trait for all query executors
 pub trait Executor: Send {
