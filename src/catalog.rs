@@ -4,7 +4,7 @@ pub mod index_info;
 pub mod system_tables;
 pub mod table_info;
 
-use crate::access::{DataType, TableHeap};
+use crate::access::{DataType, TableHeap, Value, btree::BTree};
 use crate::storage::buffer::BufferPoolManager;
 use crate::storage::page::PageId;
 use anyhow::{Result, bail};
@@ -385,11 +385,18 @@ impl Catalog {
         columns: Vec<(&str, DataType)>,
     ) -> Result<TableInfo> {
         // Create the table first
-        let table_info = self.create_table(name)?;
+        let mut table_info = self.create_table(name)?;
+
+        // Collect column names and types
+        let mut column_names = Vec::new();
+        let mut schema = Vec::new();
 
         // Insert column definitions if we have pg_attribute
         if let Some(ref mut attr_heap) = self.attribute_heap {
             for (order, (col_name, col_type)) in columns.into_iter().enumerate() {
+                column_names.push(col_name.to_string());
+                schema.push(col_type);
+
                 let attr_row = AttributeRow {
                     table_id: table_info.table_id,
                     column_info: ColumnInfo {
@@ -401,6 +408,16 @@ impl Catalog {
                 attr_heap.insert(&attr_row.serialize())?;
             }
         }
+
+        // Update table_info with column names and schema
+        table_info.column_names = Some(column_names.clone());
+        table_info.schema = Some(schema);
+
+        // Update cache
+        self.table_cache
+            .write()
+            .unwrap()
+            .insert(name.to_string(), table_info.clone());
 
         Ok(table_info)
     }
@@ -511,13 +528,18 @@ impl Catalog {
             id
         };
 
-        // Create index info (root_page_id will be set when B+Tree is created)
+        // Create B+Tree for the index
+        let mut btree = BTree::new(self.buffer_pool.clone(), key_columns.clone());
+        btree.create()?;
+        let root_page_id = btree.root_page_id();
+
+        // Create index info with root_page_id
         let index_info = IndexInfo {
             index_id,
             index_name: index_name.to_string(),
             table_id: table_info.table_id,
             key_columns,
-            root_page_id: None,
+            root_page_id,
             is_unique,
         };
 
@@ -636,25 +658,116 @@ impl Catalog {
         Ok(indexes)
     }
 
+    /// Get indexes for a table by table name
+    pub fn get_table_indexes_by_name(&self, table_name: &str) -> Result<Vec<IndexInfo>> {
+        let table_info = self
+            .get_table(table_name)?
+            .ok_or_else(|| anyhow::anyhow!("Table {} not found", table_name))?;
+        self.get_table_indexes(table_info.table_id)
+    }
+
     /// Update index root page after B+Tree creation
     pub fn update_index_root_page(
         &mut self,
-        index_id: IndexId,
-        root_page_id: PageId,
+        index_name: &str,
+        root_page_id: Option<PageId>,
     ) -> Result<()> {
-        // TODO: Update pg_index table with new root_page_id
-        // For now, just update the cache
-        let mut cache = self.index_cache.write().unwrap();
-        for indexes in cache.values_mut() {
-            for index in indexes.iter_mut() {
-                if index.index_id == index_id {
-                    index.root_page_id = Some(root_page_id);
-                    return Ok(());
+        // First, update the cache
+        let index_id = {
+            let mut cache = self.index_cache.write().unwrap();
+            let mut found_id = None;
+            for indexes in cache.values_mut() {
+                for index in indexes.iter_mut() {
+                    if index.index_name == index_name {
+                        index.root_page_id = root_page_id;
+                        found_id = Some(index.index_id);
+                        break;
+                    }
                 }
+                if found_id.is_some() {
+                    break;
+                }
+            }
+            found_id.ok_or_else(|| anyhow::anyhow!("Index {} not found", index_name))?
+        };
+
+        // Update pg_index table
+        let pg_index_table_id = CATALOG_INDEX_TABLE_ID;
+        let pg_index_table_info = self.get_table(CATALOG_INDEX_TABLE_NAME)?.unwrap();
+        let _heap = TableHeap::with_first_page(
+            self.buffer_pool.clone(),
+            pg_index_table_id,
+            pg_index_table_info.first_page_id,
+        );
+
+        // Scan for the index entry
+        let mut updated = false;
+        let schema = IndexInfo::index_info_schema();
+
+        // Scan pages to find the index
+        let mut current_page_id = Some(pg_index_table_info.first_page_id);
+        while let Some(page_id) = current_page_id {
+            match self.buffer_pool.fetch_page_write(page_id) {
+                Ok(mut guard) => {
+                    let mut heap_page = crate::storage::page::HeapPage::from_data(&mut guard);
+                    let tuple_count = heap_page.get_tuple_count();
+
+                    for slot_id in 0..tuple_count {
+                        if let Ok(data) = heap_page.get_tuple(slot_id) {
+                            if let Ok(values) =
+                                crate::access::value::deserialize_values(data, &schema)
+                            {
+                                // Check if this is the index we're looking for
+                                if let (Value::Int32(stored_id), _) = (&values[0], &values[1]) {
+                                    if IndexId(*stored_id as u32) == index_id {
+                                        // Found the index, update it
+                                        let mut updated_values = values.clone();
+                                        // Update root_page_id (index 4)
+                                        updated_values[4] = root_page_id
+                                            .map(|pid| Value::Int32(pid.0 as i32))
+                                            .unwrap_or(Value::Null);
+
+                                        let updated_data = crate::access::value::serialize_values(
+                                            &updated_values,
+                                            &schema,
+                                        )?;
+                                        // HeapPage doesn't have update_tuple, so delete and re-insert
+                                        heap_page.delete_tuple(slot_id)?;
+                                        // Check if we have space for the new tuple
+                                        if heap_page.get_free_space()
+                                            >= crate::storage::page::HeapPage::required_space_for(
+                                                updated_data.len(),
+                                            )
+                                        {
+                                            heap_page.insert_tuple(&updated_data)?;
+                                        } else {
+                                            // No space on this page, need to insert on another page
+                                            // For now, we'll just fail
+                                            anyhow::bail!("Not enough space to update index entry");
+                                        }
+                                        updated = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if updated {
+                        break;
+                    }
+
+                    current_page_id = heap_page.get_next_page_id();
+                }
+                Err(_) => break,
             }
         }
 
-        anyhow::bail!("Index with id {:?} not found", index_id)
+        if !updated {
+            anyhow::bail!("Failed to update index {} in pg_index table", index_name);
+        }
+
+        Ok(())
     }
 }
 
@@ -866,6 +979,49 @@ mod tests {
         assert_eq!(pg_attr_columns[1].column_name, "column_name");
         assert_eq!(pg_attr_columns[2].column_name, "column_type");
         assert_eq!(pg_attr_columns[3].column_name, "column_order");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_index_root_page_persistence() -> Result<()> {
+        let dir = tempdir()?;
+        let file_path = dir.path().join("test.db");
+        let page_manager = crate::storage::disk::PageManager::create(&file_path)?;
+        let buffer_pool = BufferPoolManager::new(
+            page_manager,
+            Box::new(crate::storage::buffer::lru::LruReplacer::new(10)),
+            10,
+        );
+        let mut catalog = Catalog::initialize(buffer_pool)?;
+
+        // Create a table
+        catalog.create_table_with_columns(
+            "test_table",
+            vec![("id", DataType::Int32), ("email", DataType::Varchar)],
+        )?;
+
+        // Create an index (this will also create the B+Tree)
+        let index_info = catalog.create_index("idx_email", "test_table", &["email"], false)?;
+        assert!(index_info.root_page_id.is_some());
+        let original_root = index_info.root_page_id;
+
+        // Simulate index growth by updating root page
+        let new_root = PageId(100);
+        catalog.update_index_root_page("idx_email", Some(new_root))?;
+
+        // Clear cache to force reload from disk
+        catalog.index_cache.write().unwrap().clear();
+
+        // Reload index info
+        let table_info = catalog.get_table("test_table")?.unwrap();
+        let reloaded_indexes = catalog.get_table_indexes(table_info.table_id)?;
+
+        assert_eq!(reloaded_indexes.len(), 1);
+        let reloaded_index = &reloaded_indexes[0];
+        assert_eq!(reloaded_index.index_name, "idx_email");
+        assert_eq!(reloaded_index.root_page_id, Some(new_root));
+        assert_ne!(reloaded_index.root_page_id, original_root);
 
         Ok(())
     }

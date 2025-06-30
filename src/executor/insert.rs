@@ -1,6 +1,6 @@
 //! Insert executor implementation.
 
-use crate::access::{DataType, TableHeap, Tuple, TupleId, Value};
+use crate::access::{DataType, TableHeap, Tuple, TupleId, Value, btree::BTree};
 use crate::executor::{ColumnInfo, ExecutionContext, Executor};
 use anyhow::{Result, bail};
 
@@ -107,8 +107,69 @@ impl Executor for InsertExecutor {
 
             let mut insert_count = 0;
 
+            // Get indexes for this table
+            let indexes = self
+                .context
+                .catalog
+                .get_table_indexes_by_name(&self.table_name)?;
+
             for row in &self.values {
-                heap.insert_values(row, &self.schema)?;
+                let tuple_id = heap.insert_values(row, &self.schema)?;
+
+                // Update all indexes
+                for index_info in &indexes {
+                    // Extract key values for this index
+                    let mut key_values = Vec::new();
+                    for key_col in &index_info.key_columns {
+                        // Find the position of this column in the table schema
+                        let table_info = self
+                            .context
+                            .catalog
+                            .get_table(&self.table_name)?
+                            .ok_or_else(|| anyhow::anyhow!("Table not found"))?;
+
+                        if let Some(col_names) = &table_info.column_names {
+                            if let Some(pos) = col_names
+                                .iter()
+                                .position(|name| name == &key_col.column_name)
+                            {
+                                key_values.push(row[pos].clone());
+                            } else {
+                                anyhow::bail!("Column {} not found in table", key_col.column_name);
+                            }
+                        } else {
+                            anyhow::bail!("Table has no column names");
+                        }
+                    }
+
+                    // Open the B+Tree index and insert
+                    let mut btree = BTree::open(
+                        (*self.context.buffer_pool).clone(),
+                        index_info.root_page_id,
+                        index_info.key_columns.clone(),
+                    )?;
+
+                    btree.insert(&key_values, tuple_id)?;
+
+                    // Update the root page id if it changed
+                    let new_root = btree.root_page_id();
+                    if new_root != index_info.root_page_id {
+                        // Update pg_index table with new root_page_id
+                        // Note: This requires a mutable reference to catalog, which we don't have
+                        // in the current architecture. For now, we'll log this as a warning.
+                        // In a real system, this would be handled through a transaction manager
+                        // or by having the catalog handle index updates internally.
+                        eprintln!(
+                            "Warning: Index {} root page changed from {:?} to {:?}",
+                            index_info.index_name, index_info.root_page_id, new_root
+                        );
+
+                        // We can't update the catalog here because we only have an Arc<Catalog>
+                        // and catalog.update_index_root_page requires &mut self
+                        // This is a limitation of the current architecture
+                    }
+                }
+
                 insert_count += 1;
             }
 
@@ -138,6 +199,7 @@ impl Executor for InsertExecutor {
 mod tests {
     use super::*;
     use crate::database::Database;
+    use std::sync::Arc;
     use tempfile::tempdir;
 
     #[test]
@@ -371,6 +433,82 @@ mod tests {
         let count_values = crate::access::deserialize_values(&result.data, &[DataType::Int32])?;
 
         assert_eq!(count_values[0], Value::Int32(2));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_insert_with_index_update() -> Result<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test.db");
+        let mut db = Database::create(&db_path)?;
+
+        // Create table
+        db.create_table_with_columns(
+            "users",
+            vec![
+                ("id", DataType::Int32),
+                ("email", DataType::Varchar),
+                ("age", DataType::Int32),
+            ],
+        )?;
+
+        // Create index on email column
+        let catalog = &mut *Arc::get_mut(&mut db.catalog).unwrap();
+        catalog.create_index("idx_email", "users", &["email"], false)?;
+
+        let context = ExecutionContext::new(db.catalog.clone(), db.buffer_pool.clone());
+
+        // Insert data
+        let values = vec![
+            vec![
+                Value::Int32(1),
+                Value::String("alice@example.com".to_string()),
+                Value::Int32(25),
+            ],
+            vec![
+                Value::Int32(2),
+                Value::String("bob@example.com".to_string()),
+                Value::Int32(30),
+            ],
+        ];
+
+        let mut insert = InsertExecutor::new("users".to_string(), values, context.clone());
+        insert.init()?;
+
+        // Execute insert
+        let result = insert.next()?;
+        assert!(result.is_some());
+
+        // Verify index was updated by using IndexScanExecutor
+        let index_info = db
+            .catalog
+            .get_table_indexes_by_name("users")?
+            .into_iter()
+            .find(|idx| idx.index_name == "idx_email")
+            .unwrap();
+
+        let mut index_scan = crate::executor::index_scan::IndexScanExecutor::new(
+            "users".to_string(),
+            index_info,
+            crate::executor::index_scan::IndexScanMode::Exact(vec![Value::String(
+                "alice@example.com".to_string(),
+            )]),
+            db.buffer_pool.clone(),
+            Arc::new(context),
+        );
+
+        index_scan.init()?;
+        let scan_result = index_scan.next()?;
+        assert!(scan_result.is_some());
+        let tuple = scan_result.unwrap();
+        let values = crate::access::deserialize_values(
+            &tuple.data,
+            &[DataType::Int32, DataType::Varchar, DataType::Int32],
+        )?;
+        assert_eq!(values[0], Value::Int32(1));
+        assert_eq!(values[1], Value::String("alice@example.com".to_string()));
+        assert_eq!(values[2], Value::Int32(25));
 
         Ok(())
     }

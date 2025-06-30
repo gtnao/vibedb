@@ -35,6 +35,28 @@ impl BTree {
         }
     }
 
+    /// Open an existing B+Tree with a known root page
+    pub fn open(
+        buffer_pool: BufferPoolManager,
+        root_page_id: Option<PageId>,
+        key_columns: Vec<ColumnInfo>,
+    ) -> Result<Self> {
+        let mut btree = Self {
+            buffer_pool,
+            root_page_id,
+            key_columns,
+            height: 0,
+            latch_manager: Arc::new(LatchManager::new(std::time::Duration::from_secs(5))),
+        };
+
+        // Calculate height if root exists
+        if let Some(root_id) = root_page_id {
+            btree.height = btree.calculate_height(root_id)?;
+        }
+
+        Ok(btree)
+    }
+
     pub fn root_page_id(&self) -> Option<PageId> {
         self.root_page_id
     }
@@ -45,6 +67,34 @@ impl BTree {
 
     pub fn key_columns(&self) -> &[ColumnInfo] {
         &self.key_columns
+    }
+
+    /// Calculate the height of the tree from the root
+    fn calculate_height(&self, root_id: PageId) -> Result<u32> {
+        let guard = self.buffer_pool.fetch_page(root_id)?;
+        let page_data = guard.as_ref();
+
+        // Check if it's a leaf page
+        if page_data[0] == 2 {
+            // BTREE_LEAF_PAGE_TYPE
+            return Ok(1);
+        }
+
+        // It's an internal page, recursively find height
+        let mut data_array = [0u8; PAGE_SIZE];
+        data_array.copy_from_slice(page_data);
+        let internal_page = BTreeInternalPage::from_page_data(root_id, data_array);
+
+        if internal_page.slot_count() == 0 {
+            return Ok(1);
+        }
+
+        // Get first child and calculate height from there
+        if let Some(first_child) = internal_page.child_page_id(0) {
+            Ok(1 + self.calculate_height(first_child)?)
+        } else {
+            Ok(1)
+        }
     }
 
     /// Check if a node is safe for the given operation
@@ -162,6 +212,7 @@ impl BTree {
     }
 
     /// Recursive helper for insert
+    #[allow(dead_code)]
     fn insert_recursive(
         &mut self,
         page_id: PageId,
@@ -375,6 +426,7 @@ impl BTree {
     }
 
     /// Recursive helper for delete
+    #[allow(dead_code)]
     fn delete_recursive(&mut self, page_id: PageId, key: &[u8], tuple_id: TupleId) -> Result<bool> {
         let guard = self.buffer_pool.fetch_page(page_id)?;
         let page_data: &[u8] = &*guard;
@@ -863,6 +915,7 @@ impl BTree {
     }
 
     /// Recursive helper for range scan
+    #[allow(dead_code)]
     fn range_scan_recursive(
         &self,
         page_id: PageId,

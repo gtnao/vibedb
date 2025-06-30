@@ -10,6 +10,7 @@ use crate::storage::buffer::BufferPoolManager;
 use anyhow::Result;
 use std::sync::Arc;
 
+pub mod index_scan;
 pub mod insert;
 pub mod seq_scan;
 

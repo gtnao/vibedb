@@ -33,7 +33,7 @@ fn main() -> Result<()> {
 
     println!("Created table: {}", table_info.table_name);
 
-    // Create an index on the email column
+    // Create an index on the email column (this also creates the B+Tree)
     let index_info = catalog.create_index(
         "idx_users_email",
         "users",
@@ -45,16 +45,17 @@ fn main() -> Result<()> {
         "Created index: {} on column(s): email",
         index_info.index_name
     );
+    println!(
+        "B+Tree created with root page: {:?}",
+        index_info.root_page_id
+    );
 
-    // Create the actual B+Tree for the index
-    let mut btree = BTree::new(buffer_pool.clone(), index_info.key_columns.clone());
-    btree.create()?;
-
-    // Get the root page id and update catalog
-    let root_page_id = btree.root_page_id().expect("B+Tree should have root page");
-    catalog.update_index_root_page(index_info.index_id, root_page_id)?;
-
-    println!("B+Tree created with root page: {:?}", root_page_id);
+    // Open the B+Tree for the index
+    let mut btree = BTree::open(
+        buffer_pool.clone(),
+        index_info.root_page_id,
+        index_info.key_columns.clone(),
+    )?;
 
     // Get table heap for inserting data
     let mut table_heap = TableHeap::with_first_page(
