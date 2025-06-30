@@ -1,3 +1,5 @@
+pub mod btree_internal_page;
+pub mod btree_leaf_page;
 pub mod heap_page;
 pub mod utils;
 

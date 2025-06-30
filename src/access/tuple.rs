@@ -12,6 +12,20 @@ impl TupleId {
     pub fn new(page_id: PageId, slot_id: u16) -> Self {
         Self { page_id, slot_id }
     }
+
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        assert!(bytes.len() >= 6);
+        let page_id = PageId(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]));
+        let slot_id = u16::from_le_bytes([bytes[4], bytes[5]]);
+        Self { page_id, slot_id }
+    }
+
+    pub fn to_bytes(&self) -> [u8; 6] {
+        let mut bytes = [0u8; 6];
+        bytes[0..4].copy_from_slice(&self.page_id.0.to_le_bytes());
+        bytes[4..6].copy_from_slice(&self.slot_id.to_le_bytes());
+        bytes
+    }
 }
 
 impl PartialOrd for TupleId {
@@ -64,6 +78,18 @@ mod tests {
         assert_eq!(tid1, tid2);
         assert_ne!(tid1, tid3);
         assert_ne!(tid1, tid4);
+    }
+
+    #[test]
+    fn test_tuple_id_serialization() {
+        let tid = TupleId::new(PageId(12345), 6789);
+        let bytes = tid.to_bytes();
+        assert_eq!(bytes.len(), 6);
+
+        let restored = TupleId::from_bytes(&bytes);
+        assert_eq!(restored, tid);
+        assert_eq!(restored.page_id, PageId(12345));
+        assert_eq!(restored.slot_id, 6789);
     }
 
     #[test]

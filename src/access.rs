@@ -11,6 +11,7 @@
 //! and provides a clean API for higher layers to work with logical records
 //! rather than raw bytes.
 
+pub mod btree;
 pub mod heap;
 pub mod scan;
 pub mod tuple;
