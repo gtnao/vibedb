@@ -2,6 +2,9 @@ pub mod iterator;
 pub mod key;
 pub mod latch;
 
+use self::iterator::BTreeIterator;
+use self::key::BTreeKey;
+use self::latch::{LatchCoupling, LatchManager, LatchMode};
 use crate::access::TupleId;
 use crate::access::value::{DataType, Value, serialize_values};
 use crate::catalog::ColumnInfo;
@@ -11,12 +14,14 @@ use crate::storage::page::btree_internal_page::BTreeInternalPage;
 use crate::storage::page::btree_leaf_page::BTreeLeafPage;
 use crate::storage::page::{Page, PageId};
 use anyhow::Result;
+use std::sync::Arc;
 
 pub struct BTree {
     buffer_pool: BufferPoolManager,
     root_page_id: Option<PageId>,
     key_columns: Vec<ColumnInfo>,
     height: u32,
+    latch_manager: Arc<LatchManager>,
 }
 
 impl BTree {
@@ -26,6 +31,7 @@ impl BTree {
             root_page_id: None,
             key_columns,
             height: 0,
+            latch_manager: Arc::new(LatchManager::new(std::time::Duration::from_secs(5))),
         }
     }
 
@@ -39,6 +45,36 @@ impl BTree {
 
     pub fn key_columns(&self) -> &[ColumnInfo] {
         &self.key_columns
+    }
+
+    /// Check if a node is safe for the given operation
+    /// A node is safe if it won't split/merge/redistribute after the operation
+    fn is_safe_node(page_data: &[u8], is_leaf: bool, for_insert: bool) -> bool {
+        if is_leaf {
+            // Convert slice to array
+            let mut data_array = [0u8; PAGE_SIZE];
+            data_array.copy_from_slice(page_data);
+            let leaf_page = BTreeLeafPage::from_data(PageId(0), &mut data_array);
+            if for_insert {
+                // For insert, safe if page won't split (has enough space)
+                !leaf_page.needs_split()
+            } else {
+                // For delete, safe if page won't underflow
+                !leaf_page.needs_merge()
+            }
+        } else {
+            // Convert slice to array
+            let mut data_array = [0u8; PAGE_SIZE];
+            data_array.copy_from_slice(page_data);
+            let internal_page = BTreeInternalPage::from_page_data(PageId(0), data_array);
+            if for_insert {
+                // For insert, safe if page won't split
+                !internal_page.needs_split()
+            } else {
+                // For delete, safe if page won't underflow
+                !internal_page.needs_merge()
+            }
+        }
     }
 
     /// Create a new B+Tree with an empty root leaf page
@@ -82,8 +118,19 @@ impl BTree {
 
         let root_page_id = self.root_page_id.unwrap();
 
+        // Use pessimistic latching for insert
+        let mut latch_coupling = LatchCoupling::new(self.latch_manager.clone());
+
         // Try to insert into the tree
-        let split_info = self.insert_recursive(root_page_id, &key, tuple_id)?;
+        let split_info = self.insert_with_pessimistic_latching(
+            root_page_id,
+            &key,
+            tuple_id,
+            &mut latch_coupling,
+        )?;
+
+        // Release all latches before handling root split
+        latch_coupling.release_all();
 
         // If root split, create new root
         if let Some((split_key, new_page_id)) = split_info {
@@ -264,8 +311,19 @@ impl BTree {
 
         let root_page_id = self.root_page_id.unwrap();
 
+        // Use pessimistic latching for delete
+        let mut latch_coupling = LatchCoupling::new(self.latch_manager.clone());
+
         // Try to delete from the tree
-        let needs_merge = self.delete_recursive(root_page_id, &key, tuple_id)?;
+        let needs_merge = self.delete_with_pessimistic_latching(
+            root_page_id,
+            &key,
+            tuple_id,
+            &mut latch_coupling,
+        )?;
+
+        // Release all latches
+        latch_coupling.release_all();
 
         // Handle root changes if necessary
         if needs_merge {
@@ -382,11 +440,261 @@ impl BTree {
         let key = serialize_values(key_values, &schema)?;
 
         let root_page_id = self.root_page_id.unwrap();
-        self.search_recursive(root_page_id, &key)
+
+        // Use crab latching for search (read-only operation)
+        let mut latch_coupling = LatchCoupling::new(self.latch_manager.clone());
+        self.search_with_crab_latching(root_page_id, &key, &mut latch_coupling)
     }
 
-    /// Recursive helper for search
-    fn search_recursive(&self, page_id: PageId, key: &[u8]) -> Result<Vec<TupleId>> {
+    /// Insert with pessimistic latching protocol
+    fn insert_with_pessimistic_latching(
+        &mut self,
+        page_id: PageId,
+        key: &[u8],
+        tuple_id: TupleId,
+        latch_coupling: &mut LatchCoupling,
+    ) -> Result<Option<(Vec<u8>, PageId)>> {
+        // Acquire exclusive latch on current page
+        latch_coupling.acquire(page_id, LatchMode::Exclusive)?;
+
+        let guard = self.buffer_pool.fetch_page(page_id)?;
+        let page_data: &[u8] = &*guard;
+        let is_leaf = page_data[0] == 2; // BTREE_LEAF_PAGE_TYPE
+
+        // Check if current node is safe (won't split)
+        let is_safe = Self::is_safe_node(page_data, is_leaf, true);
+
+        if is_leaf {
+            drop(guard); // Release read lock before getting write lock
+
+            // Get write access to leaf page
+            let mut write_guard = self.buffer_pool.fetch_page_write(page_id)?;
+            let mut page_data = [0u8; PAGE_SIZE];
+            page_data.copy_from_slice(&*write_guard);
+            let mut leaf_page = BTreeLeafPage::from_data(page_id, &mut page_data);
+
+            // Try to insert
+            match leaf_page.insert_key_value(key, tuple_id) {
+                Ok(_) => {
+                    // Success, write back
+                    write_guard.copy_from_slice(leaf_page.data());
+                    Ok(None)
+                }
+                Err("Insufficient space for new key and slot") | Err("Not enough space") => {
+                    // Need to split - handle split with latches held
+                    let (new_page_id, mut new_guard) = self.buffer_pool.new_page()?;
+
+                    // Split the page
+                    let (new_page_temp, split_key) =
+                        leaf_page.split().map_err(|e| anyhow::anyhow!(e))?;
+
+                    // Create new page with correct ID
+                    let mut new_page =
+                        BTreeLeafPage::from_data(new_page_id, &mut new_page_temp.data().clone());
+
+                    // Update sibling pointers
+                    let old_next = leaf_page.next_page_id();
+                    leaf_page.set_next_page_id(Some(new_page_id));
+                    new_page.set_prev_page_id(Some(page_id));
+                    new_page.set_next_page_id(old_next);
+
+                    // If there was a next page, update its prev pointer
+                    if let Some(next_id) = old_next {
+                        // Acquire latch on sibling for pointer update
+                        latch_coupling.acquire(next_id, LatchMode::Exclusive)?;
+                        let mut next_guard = self.buffer_pool.fetch_page_write(next_id)?;
+                        let mut next_data = [0u8; PAGE_SIZE];
+                        next_data.copy_from_slice(&*next_guard);
+                        let mut next_page = BTreeLeafPage::from_data(next_id, &mut next_data);
+                        next_page.set_prev_page_id(Some(new_page_id));
+                        next_guard.copy_from_slice(next_page.data());
+                    }
+
+                    // Decide which page to insert the key into
+                    if key <= &split_key {
+                        leaf_page
+                            .insert_key_value(key, tuple_id)
+                            .map_err(|e| anyhow::anyhow!(e))?;
+                    } else {
+                        new_page
+                            .insert_key_value(key, tuple_id)
+                            .map_err(|e| anyhow::anyhow!(e))?;
+                    }
+
+                    // Write back both pages
+                    write_guard.copy_from_slice(leaf_page.data());
+                    new_guard.copy_from_slice(new_page.data());
+
+                    Ok(Some((split_key, new_page_id)))
+                }
+                Err(e) => Err(anyhow::anyhow!(e)),
+            }
+        } else {
+            // Internal page
+            let mut temp_data = [0u8; PAGE_SIZE];
+            temp_data.copy_from_slice(page_data);
+            let internal_page = BTreeInternalPage::from_page_data(page_id, temp_data);
+
+            let child_index = internal_page.find_child_index(key);
+            let child_page_id = internal_page
+                .child_page_id(child_index)
+                .ok_or_else(|| anyhow::anyhow!("Invalid child index"))?;
+
+            // If current node is safe, release all ancestor latches
+            if is_safe {
+                latch_coupling.release_ancestors(page_id);
+            }
+
+            drop(guard);
+
+            // Recursively insert in child
+            let child_split = self.insert_with_pessimistic_latching(
+                child_page_id,
+                key,
+                tuple_id,
+                latch_coupling,
+            )?;
+
+            // Handle child split if necessary
+            if let Some((split_key, new_child_id)) = child_split {
+                // Get write access to internal page
+                let mut write_guard = self.buffer_pool.fetch_page_write(page_id)?;
+                let mut page_data = [0u8; PAGE_SIZE];
+                page_data.copy_from_slice(&*write_guard);
+                let mut internal_page = BTreeInternalPage::from_page_data(page_id, page_data);
+
+                // Try to insert the new key and child
+                match internal_page.insert_key_and_child(&split_key, new_child_id) {
+                    Ok(_) => {
+                        write_guard.copy_from_slice(internal_page.data());
+                        Ok(None)
+                    }
+                    Err("Not enough space to insert") => {
+                        // Need to split internal page
+                        let (new_page_id, mut new_guard) = self.buffer_pool.new_page()?;
+                        let (new_page_temp, median_key) = internal_page
+                            .split()
+                            .map_err(|e: &str| anyhow::anyhow!(e))?;
+
+                        let mut new_page_data = [0u8; PAGE_SIZE];
+                        new_page_data.copy_from_slice(new_page_temp.data());
+                        let mut new_page =
+                            BTreeInternalPage::from_page_data(new_page_id, new_page_data);
+
+                        // Insert the new key and child into appropriate page
+                        if split_key <= median_key {
+                            internal_page
+                                .insert_key_and_child(&split_key, new_child_id)
+                                .map_err(|e: &str| anyhow::anyhow!(e))?;
+                        } else {
+                            new_page
+                                .insert_key_and_child(&split_key, new_child_id)
+                                .map_err(|e: &str| anyhow::anyhow!(e))?;
+                        }
+
+                        // Write back both pages
+                        write_guard.copy_from_slice(internal_page.data());
+                        new_guard.copy_from_slice(new_page.data());
+
+                        Ok(Some((median_key, new_page_id)))
+                    }
+                    Err(e) => Err(anyhow::anyhow!(e)),
+                }
+            } else {
+                Ok(None)
+            }
+        }
+    }
+
+    /// Delete with pessimistic latching protocol
+    fn delete_with_pessimistic_latching(
+        &mut self,
+        page_id: PageId,
+        key: &[u8],
+        tuple_id: TupleId,
+        latch_coupling: &mut LatchCoupling,
+    ) -> Result<bool> {
+        // Acquire exclusive latch on current page
+        latch_coupling.acquire(page_id, LatchMode::Exclusive)?;
+
+        let guard = self.buffer_pool.fetch_page(page_id)?;
+        let page_data: &[u8] = &*guard;
+        let is_leaf = page_data[0] == 2; // BTREE_LEAF_PAGE_TYPE
+
+        // Check if current node is safe (won't underflow)
+        let is_safe = Self::is_safe_node(page_data, is_leaf, false);
+
+        if is_leaf {
+            drop(guard); // Release read lock before getting write lock
+
+            // Get write access to leaf page
+            let mut write_guard = self.buffer_pool.fetch_page_write(page_id)?;
+            let mut page_data = [0u8; PAGE_SIZE];
+            page_data.copy_from_slice(&*write_guard);
+            let mut leaf_page = BTreeLeafPage::from_data(page_id, &mut page_data);
+
+            // Try to delete
+            match leaf_page.delete_key_value(key, tuple_id) {
+                Ok(_) => {
+                    // Success, write back
+                    write_guard.copy_from_slice(leaf_page.data());
+                    Ok(leaf_page.needs_merge())
+                }
+                Err(e) => Err(anyhow::anyhow!(e)),
+            }
+        } else {
+            // Internal page
+            let mut temp_data = [0u8; PAGE_SIZE];
+            temp_data.copy_from_slice(page_data);
+            let internal_page = BTreeInternalPage::from_page_data(page_id, temp_data);
+
+            let child_index = internal_page.find_child_index(key);
+            let child_page_id = internal_page
+                .child_page_id(child_index)
+                .ok_or_else(|| anyhow::anyhow!("Invalid child index"))?;
+
+            // If current node is safe, release all ancestor latches
+            if is_safe {
+                latch_coupling.release_ancestors(page_id);
+            }
+
+            drop(guard);
+
+            // Recursively delete from child
+            let child_needs_merge = self.delete_with_pessimistic_latching(
+                child_page_id,
+                key,
+                tuple_id,
+                latch_coupling,
+            )?;
+
+            // Handle child merge if necessary
+            if child_needs_merge {
+                self.handle_child_merge(page_id, child_index)?;
+
+                // Check if current page needs merge after handling child
+                let guard = self.buffer_pool.fetch_page(page_id)?;
+                let page_data: &[u8] = &*guard;
+                let mut temp_data = [0u8; PAGE_SIZE];
+                temp_data.copy_from_slice(page_data);
+                let internal_page = BTreeInternalPage::from_page_data(page_id, temp_data);
+                Ok(internal_page.needs_merge())
+            } else {
+                Ok(false)
+            }
+        }
+    }
+
+    /// Search with crab latching protocol
+    fn search_with_crab_latching(
+        &self,
+        page_id: PageId,
+        key: &[u8],
+        latch_coupling: &mut LatchCoupling,
+    ) -> Result<Vec<TupleId>> {
+        // Acquire shared latch on current page
+        latch_coupling.acquire(page_id, LatchMode::Shared)?;
+
         let guard = self.buffer_pool.fetch_page(page_id)?;
         let page_data: &[u8] = &*guard;
 
@@ -399,7 +707,12 @@ impl BTree {
             let leaf_page = BTreeLeafPage::from_data(page_id, &mut temp_data);
 
             // Find all tuple IDs for the key (handles duplicates)
-            Ok(leaf_page.find_tuples_for_key(key))
+            let result = leaf_page.find_tuples_for_key(key);
+
+            // Release all latches
+            latch_coupling.release_all();
+
+            Ok(result)
         } else {
             // Internal page - find the appropriate child
             let mut temp_data = [0u8; PAGE_SIZE];
@@ -411,12 +724,68 @@ impl BTree {
                 .child_page_id(child_index)
                 .ok_or_else(|| anyhow::anyhow!("Invalid child index"))?;
 
+            // For read operations, we can release parent latch before acquiring child
+            // This is safe because we're not modifying the tree structure
+            latch_coupling.release_all();
+
             // Recursively search in the child
-            self.search_recursive(child_page_id, key)
+            self.search_with_crab_latching(child_page_id, key, latch_coupling)
+        }
+    }
+
+    /// Find leaf page for a key using optimistic descent
+    fn find_leaf_optimistic(&self, key: &[u8]) -> Result<PageId> {
+        let mut current_page_id = self.root_page_id.unwrap();
+
+        loop {
+            let guard = self.buffer_pool.fetch_page(current_page_id)?;
+            let page_data: &[u8] = &*guard;
+
+            // Check if it's a leaf page
+            if page_data[0] == 2 {
+                // BTREE_LEAF_PAGE_TYPE
+                return Ok(current_page_id);
+            }
+
+            // Internal page - find appropriate child
+            let mut temp_data = [0u8; PAGE_SIZE];
+            temp_data.copy_from_slice(page_data);
+            let internal_page = BTreeInternalPage::from_page_data(current_page_id, temp_data);
+
+            let child_index = internal_page.find_child_index(key);
+            current_page_id = internal_page
+                .child_page_id(child_index)
+                .ok_or_else(|| anyhow::anyhow!("Invalid child index"))?;
+        }
+    }
+
+    /// Find the leftmost leaf page using optimistic descent
+    fn find_leftmost_leaf_optimistic(&self) -> Result<PageId> {
+        let mut current_page_id = self.root_page_id.unwrap();
+
+        loop {
+            let guard = self.buffer_pool.fetch_page(current_page_id)?;
+            let page_data: &[u8] = &*guard;
+
+            // Check if it's a leaf page
+            if page_data[0] == 2 {
+                // BTREE_LEAF_PAGE_TYPE
+                return Ok(current_page_id);
+            }
+
+            // Internal page - go to leftmost child
+            let mut temp_data = [0u8; PAGE_SIZE];
+            temp_data.copy_from_slice(page_data);
+            let internal_page = BTreeInternalPage::from_page_data(current_page_id, temp_data);
+
+            current_page_id = internal_page
+                .child_page_id(0)
+                .ok_or_else(|| anyhow::anyhow!("Invalid leftmost child"))?;
         }
     }
 
     /// Perform a range scan and return all matching tuple IDs
+    /// Uses optimistic descent and iterator for efficient scanning
     pub fn range_scan(
         &self,
         start_key: Option<&[Value]>,
@@ -430,28 +799,44 @@ impl BTree {
 
         // Serialize the keys if provided
         let schema: Vec<_> = self.key_columns.iter().map(|c| c.column_type).collect();
-        let start_key_bytes = if let Some(start) = start_key {
-            Some(serialize_values(start, &schema)?)
-        } else {
-            None
-        };
-        let end_key_bytes = if let Some(end) = end_key {
-            Some(serialize_values(end, &schema)?)
+
+        // Convert to BTreeKey for proper comparison
+        let start_btree_key = if let Some(start) = start_key {
+            Some(BTreeKey::from_values(start, &schema)?)
         } else {
             None
         };
 
-        let root_page_id = self.root_page_id.unwrap();
-        let mut results = Vec::new();
+        let end_btree_key = if let Some(end) = end_key {
+            Some(BTreeKey::from_values(end, &schema)?)
+        } else {
+            None
+        };
 
-        self.range_scan_recursive(
-            root_page_id,
-            start_key_bytes.as_deref(),
-            end_key_bytes.as_deref(),
+        // Find starting leaf page using optimistic descent
+        let start_page_id = if let Some(ref key) = start_btree_key {
+            self.find_leaf_optimistic(key.data())?
+        } else {
+            self.find_leftmost_leaf_optimistic()?
+        };
+
+        // Create iterator for range scan
+        let mut iterator = BTreeIterator::new_forward(
+            self.buffer_pool.clone(),
+            start_page_id,
+            schema.clone(),
+            start_btree_key,
+            end_btree_key,
             include_start,
             include_end,
-            &mut results,
         )?;
+
+        // Collect results
+        let mut results = Vec::new();
+        while let Some((key, tuple_id)) = iterator.advance()? {
+            let values = key.to_values()?;
+            results.push((values, tuple_id));
+        }
 
         Ok(results)
     }
@@ -2241,5 +2626,200 @@ mod tests {
 
         // Final height should be greater than 1 for this many inserts
         assert!(btree.height() > 1);
+    }
+
+    #[test]
+    fn test_crab_latching_search() {
+        let (buffer_pool, _temp_dir) = create_test_buffer_pool().unwrap();
+        let key_columns = create_test_key_columns();
+        let mut btree = BTree::new(buffer_pool, key_columns);
+        btree.create().unwrap();
+
+        // Insert test data
+        for i in 0..10 {
+            let key = vec![Value::Int32(i)];
+            let tuple_id = TupleId::new(PageId(1), i as u16);
+            btree.insert(&key, tuple_id).unwrap();
+        }
+
+        // Test search with crab latching
+        let key = vec![Value::Int32(5)];
+        let results = btree.search(&key).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0], TupleId::new(PageId(1), 5));
+
+        // Test search for non-existent key
+        let key = vec![Value::Int32(100)];
+        let results = btree.search(&key).unwrap();
+        assert_eq!(results.len(), 0);
+    }
+
+    #[test]
+    fn test_pessimistic_latching_insert() {
+        let (buffer_pool, _temp_dir) = create_test_buffer_pool().unwrap();
+        let key_columns = create_test_key_columns();
+        let mut btree = BTree::new(buffer_pool, key_columns);
+        btree.create().unwrap();
+
+        // Insert multiple values with pessimistic latching
+        for i in 0..100 {
+            let key = vec![Value::Int32(i)];
+            let tuple_id = TupleId::new(PageId(1), i as u16);
+            btree.insert(&key, tuple_id).unwrap();
+        }
+
+        // Verify all values were inserted correctly
+        for i in 0..100 {
+            let key = vec![Value::Int32(i)];
+            let results = btree.search(&key).unwrap();
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0], TupleId::new(PageId(1), i as u16));
+        }
+    }
+
+    #[test]
+    fn test_pessimistic_latching_delete() {
+        let (buffer_pool, _temp_dir) = create_test_buffer_pool().unwrap();
+        let key_columns = create_test_key_columns();
+        let mut btree = BTree::new(buffer_pool, key_columns);
+        btree.create().unwrap();
+
+        // Insert test data
+        for i in 0..20 {
+            let key = vec![Value::Int32(i)];
+            let tuple_id = TupleId::new(PageId(1), i as u16);
+            btree.insert(&key, tuple_id).unwrap();
+        }
+
+        // Delete some values with pessimistic latching
+        for i in (0..20).step_by(2) {
+            let key = vec![Value::Int32(i)];
+            let tuple_id = TupleId::new(PageId(1), i as u16);
+            btree.delete(&key, tuple_id).unwrap();
+        }
+
+        // Verify deletions
+        for i in 0..20 {
+            let key = vec![Value::Int32(i)];
+            let results = btree.search(&key).unwrap();
+            if i % 2 == 0 {
+                assert_eq!(results.len(), 0);
+            } else {
+                assert_eq!(results.len(), 1);
+                assert_eq!(results[0], TupleId::new(PageId(1), i as u16));
+            }
+        }
+    }
+
+    #[test]
+    fn test_safe_node_detection() {
+        // Test is_safe_node function
+        let (buffer_pool, _temp_dir) = create_test_buffer_pool().unwrap();
+        let key_columns = create_test_key_columns();
+        let mut btree = BTree::new(buffer_pool, key_columns);
+        btree.create().unwrap();
+
+        // Get root page to test safe node detection
+        let root_id = btree.root_page_id().unwrap();
+        let guard = btree.buffer_pool.fetch_page(root_id).unwrap();
+
+        // New leaf page should be safe for both insert and delete
+        assert!(BTree::is_safe_node(&*guard, true, true));
+        assert!(BTree::is_safe_node(&*guard, true, false));
+
+        drop(guard);
+
+        // Insert enough data to make page nearly full
+        for i in 0..400 {
+            let key = vec![Value::Int32(i)];
+            let tuple_id = TupleId::new(PageId(1), i as u16);
+            btree.insert(&key, tuple_id).unwrap();
+        }
+
+        // Check if nodes are still safe
+        let guard = btree.buffer_pool.fetch_page(root_id).unwrap();
+        let is_safe_for_insert = BTree::is_safe_node(&*guard, btree.height() == 1, true);
+        let is_safe_for_delete = BTree::is_safe_node(&*guard, btree.height() == 1, false);
+
+        // At this point, page might not be safe for insert due to being nearly full
+        // but should still be safe for delete
+        assert!(!is_safe_for_insert || is_safe_for_delete);
+    }
+
+    #[test]
+    fn test_optimistic_descent() {
+        let (buffer_pool, _temp_dir) = create_test_buffer_pool().unwrap();
+        let key_columns = create_test_key_columns();
+        let mut btree = BTree::new(buffer_pool, key_columns);
+        btree.create().unwrap();
+
+        // Insert test data
+        for i in 0..50 {
+            let key = vec![Value::Int32(i)];
+            let tuple_id = TupleId::new(PageId(1), i as u16);
+            btree.insert(&key, tuple_id).unwrap();
+        }
+
+        // Test optimistic descent for range scan
+        let start_key = vec![Value::Int32(10)];
+        let end_key = vec![Value::Int32(20)];
+        let results = btree
+            .range_scan(Some(&start_key), Some(&end_key), true, true)
+            .unwrap();
+
+        assert_eq!(results.len(), 11); // 10 through 20 inclusive
+        for (i, (_key_values, tuple_id)) in results.iter().enumerate() {
+            assert_eq!(*tuple_id, TupleId::new(PageId(1), (10 + i) as u16));
+        }
+    }
+
+    #[test]
+    fn test_concurrent_operations_simulation() {
+        // This test simulates concurrent operations by interleaving inserts and searches
+        let (buffer_pool, _temp_dir) = create_test_buffer_pool().unwrap();
+        let key_columns = create_test_key_columns();
+        let mut btree = BTree::new(buffer_pool, key_columns);
+        btree.create().unwrap();
+
+        // Interleave inserts and searches
+        for i in 0..50 {
+            // Insert
+            let key = vec![Value::Int32(i * 2)];
+            let tuple_id = TupleId::new(PageId(1), (i * 2) as u16);
+            btree.insert(&key, tuple_id).unwrap();
+
+            // Search for previously inserted values
+            if i > 0 {
+                let search_key = vec![Value::Int32((i - 1) * 2)];
+                let results = btree.search(&search_key).unwrap();
+                assert_eq!(results.len(), 1);
+                assert_eq!(results[0], TupleId::new(PageId(1), ((i - 1) * 2) as u16));
+            }
+        }
+
+        // Verify all values are present
+        for i in 0..50 {
+            let key = vec![Value::Int32(i * 2)];
+            let results = btree.search(&key).unwrap();
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0], TupleId::new(PageId(1), (i * 2) as u16));
+        }
+    }
+
+    #[test]
+    fn test_latch_manager_integration() {
+        let (buffer_pool, _temp_dir) = create_test_buffer_pool().unwrap();
+        let key_columns = create_test_key_columns();
+        let btree = BTree::new(buffer_pool, key_columns);
+
+        // Test that latch manager is properly initialized
+        let stats = btree.latch_manager.get_statistics();
+        assert_eq!(stats.shared_acquisitions, 0);
+        assert_eq!(stats.exclusive_acquisitions, 0);
+        assert_eq!(stats.upgrades, 0);
+        assert_eq!(stats.downgrades, 0);
+        assert_eq!(stats.waits, 0);
+        assert_eq!(stats.deadlocks_detected, 0);
+        assert_eq!(stats.timeouts, 0);
     }
 }
