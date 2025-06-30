@@ -4,7 +4,8 @@ use crate::access::{DataType, Value};
 use crate::storage::page::PageId;
 use anyhow::{Result, bail};
 
-pub type TableId = u32;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct TableId(pub u32);
 
 /// Type alias for custom deserializer function
 pub type CustomDeserializer = fn(&[u8]) -> Result<Vec<Value>>;
@@ -25,7 +26,7 @@ pub struct TableInfo {
 impl TableInfo {
     pub fn serialize(&self) -> Vec<u8> {
         let mut data = Vec::new();
-        data.extend_from_slice(&self.table_id.to_le_bytes());
+        data.extend_from_slice(&self.table_id.0.to_le_bytes());
         data.extend_from_slice(&(self.table_name.len() as u32).to_le_bytes());
         data.extend_from_slice(self.table_name.as_bytes());
         data.extend_from_slice(&self.first_page_id.0.to_le_bytes());
@@ -35,7 +36,7 @@ impl TableInfo {
     /// Convert to Values for scanning
     pub fn to_values(&self) -> Vec<Value> {
         vec![
-            Value::Int32(self.table_id as i32),
+            Value::Int32(self.table_id.0 as i32),
             Value::String(self.table_name.clone()),
             Value::Int32(self.first_page_id.0 as i32),
         ]
@@ -49,12 +50,12 @@ impl TableInfo {
         let mut offset = 0;
 
         // Read table_id
-        let table_id = u32::from_le_bytes([
+        let table_id = TableId(u32::from_le_bytes([
             data[offset],
             data[offset + 1],
             data[offset + 2],
             data[offset + 3],
-        ]);
+        ]));
         offset += 4;
 
         // Read table_name length
@@ -99,7 +100,7 @@ mod tests {
     #[test]
     fn test_table_info_serialization() -> Result<()> {
         let info = TableInfo {
-            table_id: 42,
+            table_id: TableId(42),
             table_name: "test_table".to_string(),
             first_page_id: PageId(123),
             schema: None,

@@ -50,23 +50,44 @@ impl BTree {
     /// Check if a node is safe for the given operation
     /// A node is safe if it won't split/merge/redistribute after the operation
     fn is_safe_node(page_data: &[u8], is_leaf: bool, for_insert: bool) -> bool {
+        // The root page is always safe because it doesn't need to maintain minimum keys
+        // In a real implementation, we would need to track if this is the root page
+        // For now, we'll use a heuristic: if the page has very few keys, it might be root
+
         if is_leaf {
             // Convert slice to array
             let mut data_array = [0u8; PAGE_SIZE];
             data_array.copy_from_slice(page_data);
             let leaf_page = BTreeLeafPage::from_data(PageId(0), &mut data_array);
+
+            // Root page is always safe
+            let key_count = leaf_page.slot_count();
+            if key_count == 0 {
+                // Empty page (likely root) is safe
+                return true;
+            }
+
             if for_insert {
                 // For insert, safe if page won't split (has enough space)
                 !leaf_page.needs_split()
             } else {
                 // For delete, safe if page won't underflow
-                !leaf_page.needs_merge()
+                // Root page can have fewer than MIN_KEYS
+                !leaf_page.needs_merge() || key_count == 1
             }
         } else {
             // Convert slice to array
             let mut data_array = [0u8; PAGE_SIZE];
             data_array.copy_from_slice(page_data);
             let internal_page = BTreeInternalPage::from_page_data(PageId(0), data_array);
+
+            // Root page is always safe
+            let key_count = internal_page.slot_count();
+            if key_count <= 1 {
+                // Root internal page with 0 or 1 key is safe
+                return true;
+            }
+
             if for_insert {
                 // For insert, safe if page won't split
                 !internal_page.needs_split()

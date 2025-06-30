@@ -127,9 +127,10 @@ mod tests {
 
         // Should contain system catalogs
         let tables = db.list_tables()?;
-        assert_eq!(tables.len(), 2);
+        assert_eq!(tables.len(), 3);
         assert!(tables.contains(&"pg_tables".to_string()));
         assert!(tables.contains(&"pg_attribute".to_string()));
+        assert!(tables.contains(&"pg_index".to_string()));
 
         Ok(())
     }
@@ -180,7 +181,7 @@ mod tests {
         {
             let db = Database::open(&db_path)?;
             let tables = db.list_tables()?;
-            assert_eq!(tables.len(), 4); // pg_tables + pg_attribute + users + products
+            assert_eq!(tables.len(), 5); // pg_tables + pg_attribute + pg_index + users + products
             assert!(tables.contains(&"users".to_string()));
             assert!(tables.contains(&"products".to_string()));
 

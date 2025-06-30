@@ -112,7 +112,7 @@ mod tests {
         let replacer = Box::new(LruReplacer::new(10));
         let buffer_pool = BufferPoolManager::new(page_manager, replacer, 10);
 
-        let mut heap = TableHeap::new(buffer_pool.clone(), 1);
+        let mut heap = TableHeap::new(buffer_pool.clone(), crate::catalog::TableId(1));
 
         // Insert some test data
         let schema = vec![DataType::Int32, DataType::Varchar];
@@ -199,7 +199,7 @@ mod tests {
         let replacer = Box::new(LruReplacer::new(10));
         let buffer_pool = BufferPoolManager::new(page_manager, replacer, 10);
 
-        let mut heap = TableHeap::new(buffer_pool.clone(), 1);
+        let mut heap = TableHeap::new(buffer_pool.clone(), crate::catalog::TableId(1));
 
         // Insert enough data to span multiple pages
         let schema = vec![DataType::Varchar];

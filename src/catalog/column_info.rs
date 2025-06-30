@@ -4,7 +4,7 @@ use crate::access::{DataType, Value};
 use crate::catalog::table_info::TableId;
 use anyhow::{Result, bail};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ColumnInfo {
     pub column_name: String,
     pub column_type: DataType,
@@ -73,7 +73,7 @@ pub struct AttributeRow {
 impl AttributeRow {
     pub fn serialize(&self) -> Vec<u8> {
         let mut data = Vec::new();
-        data.extend_from_slice(&self.table_id.to_le_bytes());
+        data.extend_from_slice(&self.table_id.0.to_le_bytes());
         data.extend_from_slice(&self.column_info.serialize());
         data
     }
@@ -81,7 +81,7 @@ impl AttributeRow {
     /// Convert to Values for scanning
     pub fn to_values(&self) -> Vec<Value> {
         vec![
-            Value::Int32(self.table_id as i32),
+            Value::Int32(self.table_id.0 as i32),
             Value::String(self.column_info.column_name.clone()),
             Value::Int32(self.column_info.column_type as u8 as i32),
             Value::Int32(self.column_info.column_order as i32),
@@ -93,7 +93,7 @@ impl AttributeRow {
             bail!("Invalid attribute row data: too short");
         }
 
-        let table_id = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+        let table_id = TableId(u32::from_le_bytes([data[0], data[1], data[2], data[3]]));
 
         let column_info = ColumnInfo::deserialize(&data[4..])?;
 

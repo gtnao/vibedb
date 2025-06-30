@@ -133,7 +133,7 @@ mod tests {
         let page_manager = PageManager::create(&file_path)?;
         let replacer = Box::new(crate::storage::buffer::lru::LruReplacer::new(10));
         let buffer_pool = BufferPoolManager::new(page_manager, replacer, 10);
-        Ok(TableHeap::new(buffer_pool, 1))
+        Ok(TableHeap::new(buffer_pool, crate::catalog::TableId(1)))
     }
 
     #[test]

@@ -170,7 +170,7 @@ fn main() -> Result<()> {
     while let Some(tuple) = attr_scan.next()? {
         let values = vibedb::access::deserialize_values(&tuple.data, &attr_schema)?;
         if let Value::Int32(table_id) = &values[0] {
-            if *table_id == employees_table.table_id as i32 {
+            if *table_id == employees_table.table_id.0 as i32 {
                 println!(
                     "  Column: {}, Type: {}, Order: {}",
                     match &values[1] {
