@@ -3,7 +3,9 @@
 use anyhow::Result;
 use vibedb::access::{DataType, Value};
 use vibedb::database::Database;
-use vibedb::executor::{ExecutionContext, Executor, FilterExecutor, SeqScanExecutor};
+use vibedb::executor::{
+    ExecutionContext, Executor, FilterBuilder, FilterExecutor, SeqScanExecutor,
+};
 
 fn main() -> Result<()> {
     // Create a temporary database
@@ -84,9 +86,9 @@ fn main() -> Result<()> {
         "employees".to_string(),
         context.clone(),
     ));
-    let dept_filter = Box::new(
-        move |values: &[Value]| matches!(&values[2], Value::String(dept) if dept == "Engineering"),
-    );
+
+    // Create filter expression: department = 'Engineering' (department is column index 2)
+    let dept_filter = FilterBuilder::column_equals_string(2, "Engineering");
 
     let mut filter_executor = FilterExecutor::new(seq_scan, dept_filter);
     filter_executor.init()?;
@@ -120,9 +122,9 @@ fn main() -> Result<()> {
         "employees".to_string(),
         context.clone(),
     ));
-    let salary_filter = Box::new(
-        move |values: &[Value]| matches!(&values[3], Value::Int32(salary) if *salary >= 70000),
-    );
+
+    // Create filter expression: salary >= 70000 (salary is column index 3)
+    let salary_filter = FilterBuilder::column_ge_int32(3, 70000);
 
     let mut filter_executor2 = FilterExecutor::new(seq_scan2, salary_filter);
     filter_executor2.init()?;
@@ -152,17 +154,109 @@ fn main() -> Result<()> {
     println!("\nExample 3: Engineering employees with salary > $85,000");
     println!("------------------------------------------------------");
 
-    let seq_scan3 = Box::new(SeqScanExecutor::new("employees".to_string(), context));
-    let complex_filter = Box::new(move |values: &[Value]| {
-        let dept_match = matches!(&values[2], Value::String(dept) if dept == "Engineering");
-        let salary_match = matches!(&values[3], Value::Int32(salary) if *salary > 85000);
-        dept_match && salary_match
-    });
+    let seq_scan3 = Box::new(SeqScanExecutor::new(
+        "employees".to_string(),
+        context.clone(),
+    ));
+
+    // Create complex filter expression: department = 'Engineering' AND salary > 85000
+    let complex_filter = FilterBuilder::and(
+        FilterBuilder::column_equals_string(2, "Engineering"),
+        FilterBuilder::column_gt_int32(3, 85000),
+    );
 
     let mut filter_executor3 = FilterExecutor::new(seq_scan3, complex_filter);
     filter_executor3.init()?;
 
     while let Some(tuple) = filter_executor3.next()? {
+        let values = vibedb::access::deserialize_values(
+            &tuple.data,
+            &vec![
+                DataType::Int32,
+                DataType::Varchar,
+                DataType::Varchar,
+                DataType::Int32,
+            ],
+        )?;
+
+        if let (Value::Int32(id), Value::String(name), Value::String(dept), Value::Int32(salary)) =
+            (&values[0], &values[1], &values[2], &values[3])
+        {
+            println!(
+                "ID: {}, Name: {}, Department: {}, Salary: ${}",
+                id, name, dept, salary
+            );
+        }
+    }
+
+    // Example 4: More complex expressions (OR conditions and NULL checks)
+    println!("\nExample 4: Sales or HR employees, or employees with NULL department");
+    println!("-------------------------------------------------------------------");
+
+    let seq_scan4 = Box::new(SeqScanExecutor::new(
+        "employees".to_string(),
+        context.clone(),
+    ));
+
+    // Create filter: department = 'Sales' OR department = 'HR' OR department IS NULL
+    let complex_or_filter = FilterBuilder::or(
+        FilterBuilder::or(
+            FilterBuilder::column_equals_string(2, "Sales"),
+            FilterBuilder::column_equals_string(2, "HR"),
+        ),
+        FilterBuilder::column_is_null(2),
+    );
+
+    let mut filter_executor4 = FilterExecutor::new(seq_scan4, complex_or_filter);
+    filter_executor4.init()?;
+
+    while let Some(tuple) = filter_executor4.next()? {
+        let values = vibedb::access::deserialize_values(
+            &tuple.data,
+            &vec![
+                DataType::Int32,
+                DataType::Varchar,
+                DataType::Varchar,
+                DataType::Int32,
+            ],
+        )?;
+
+        if let (Value::Int32(id), Value::String(name), dept, Value::Int32(salary)) =
+            (&values[0], &values[1], &values[2], &values[3])
+        {
+            let dept_str = match dept {
+                Value::String(d) => d.as_str(),
+                Value::Null => "NULL",
+                _ => "?",
+            };
+            println!(
+                "ID: {}, Name: {}, Department: {}, Salary: ${}",
+                id, name, dept_str, salary
+            );
+        }
+    }
+
+    // Example 5: Using expression builder pattern for readability
+    println!("\nExample 5: High earners in technical departments");
+    println!("------------------------------------------------");
+
+    // Demonstrate using the builder to create a more readable expression:
+    // (department = 'Engineering' OR department = 'Data Science') AND salary > 75000
+    let technical_depts = FilterBuilder::or(
+        FilterBuilder::column_equals_string(2, "Engineering"),
+        FilterBuilder::column_equals_string(2, "Data Science"),
+    );
+    let high_salary = FilterBuilder::column_gt_int32(3, 75000);
+    let technical_high_earners = FilterBuilder::and(technical_depts, high_salary);
+
+    let seq_scan5 = Box::new(SeqScanExecutor::new(
+        "employees".to_string(),
+        context.clone(),
+    ));
+    let mut filter_executor5 = FilterExecutor::new(seq_scan5, technical_high_earners);
+    filter_executor5.init()?;
+
+    while let Some(tuple) = filter_executor5.next()? {
         let values = vibedb::access::deserialize_values(
             &tuple.data,
             &vec![

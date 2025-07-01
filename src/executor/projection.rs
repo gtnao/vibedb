@@ -506,14 +506,9 @@ mod tests {
         let mock_executor = Box::new(MockExecutor::new(tuples, schema));
 
         // Create filter for age >= 25
-        let predicate: Box<dyn Fn(&[Value]) -> bool + Send> = Box::new(|values| {
-            if let Value::Int32(age) = &values[2] {
-                *age >= 25
-            } else {
-                false
-            }
-        });
-        let filter = Box::new(FilterExecutor::new(mock_executor, predicate));
+        use crate::executor::FilterBuilder;
+        let filter_expr = FilterBuilder::column_ge_int32(2, 25);
+        let filter = Box::new(FilterExecutor::new(mock_executor, filter_expr));
 
         // Project columns [1, 2] (name, age) from filtered results
         let mut projection = ProjectionExecutor::new(filter, vec![1, 2]);

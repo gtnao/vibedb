@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 pub mod delete;
 pub mod filter;
+pub mod filter_builder;
 pub mod index_scan;
 pub mod insert;
 pub mod limit;
@@ -23,6 +24,7 @@ pub mod update;
 // Re-export executors
 pub use delete::DeleteExecutor;
 pub use filter::FilterExecutor;
+pub use filter_builder::FilterBuilder;
 pub use index_scan::IndexScanExecutor;
 pub use insert::InsertExecutor;
 pub use limit::LimitExecutor;

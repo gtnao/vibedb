@@ -176,7 +176,10 @@ fn main() -> Result<()> {
         println!("  {} - {}", id, name);
         count += 1;
     }
-    println!("  (Returned {} items - less than limit due to end of data)", count);
+    println!(
+        "  (Returned {} items - less than limit due to end of data)",
+        count
+    );
 
     // Example 6: Combined with filter and limit
     println!("\nExample 6: Expensive products with limit (price > 100, LIMIT 3)");
