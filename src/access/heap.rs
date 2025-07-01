@@ -98,12 +98,12 @@ impl TableHeap {
     }
 
     /// Update a tuple
-    pub fn update(&mut self, tuple_id: TupleId, data: &[u8]) -> Result<()> {
+    pub fn update(&mut self, tuple_id: TupleId, data: &[u8]) -> Result<TupleId> {
         // For simplicity, we'll do delete + insert for now
         // In a real implementation, we'd try in-place update if size permits
         self.delete(tuple_id)?;
-        self.insert(data)?;
-        Ok(())
+        let new_tuple_id = self.insert(data)?;
+        Ok(new_tuple_id)
     }
 
     /// Delete a tuple

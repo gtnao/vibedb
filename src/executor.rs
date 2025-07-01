@@ -10,13 +10,24 @@ use crate::storage::buffer::BufferPoolManager;
 use anyhow::Result;
 use std::sync::Arc;
 
+pub mod delete;
+pub mod filter;
 pub mod index_scan;
 pub mod insert;
+pub mod projection;
 pub mod seq_scan;
+pub mod sort;
+pub mod update;
 
 // Re-export executors
+pub use delete::DeleteExecutor;
+pub use filter::FilterExecutor;
+pub use index_scan::IndexScanExecutor;
 pub use insert::InsertExecutor;
+pub use projection::ProjectionExecutor;
 pub use seq_scan::SeqScanExecutor;
+pub use sort::{NullOrder, SortCriteria, SortExecutor, SortOrder};
+pub use update::{UpdateExecutor, UpdateExpression};
 
 /// Trait for all query executors
 pub trait Executor: Send {

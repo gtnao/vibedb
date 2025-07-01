@@ -26,7 +26,7 @@ fn test_transaction_basic_operations() {
         )
         .unwrap();
 
-    let held_locks = lock_manager.get_held_locks(tx_id.value());
+    let held_locks = lock_manager.get_transaction_locks(tx_id.value());
     assert_eq!(held_locks.len(), 1);
 
     tx_manager.commit(tx_id).unwrap();
@@ -113,7 +113,7 @@ fn test_concurrent_readers() {
     let mut handles = vec![];
 
     // Multiple readers should be able to acquire shared locks
-    for i in 0..3 {
+    for _i in 0..3 {
         let lock_manager_clone = lock_manager.clone();
         let tx_manager_clone = tx_manager.clone();
 

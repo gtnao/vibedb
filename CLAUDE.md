@@ -327,6 +327,77 @@ TransactionやWALは未実装なので無視してください。
 
 Current: Completed Concurrency Control implementation with LatchManager integration
 
+# TODO: High-Priority Missing Features Implementation (6-Hour Sprint)
+
+## 1. DELETE Executor (1 hour)
+- [ ] Create src/executor/delete.rs
+- [ ] Implement DeleteExecutor with predicate support
+- [ ] Integrate with TableHeap delete functionality
+- [ ] Add transaction support for delete operations
+- [ ] Write comprehensive tests
+- [ ] Run cargo build, test, fmt, clippy
+
+## 2. UPDATE Executor (1.5 hours) 
+- [ ] Create src/executor/update.rs
+- [ ] Implement UpdateExecutor with SET clause support
+- [ ] Handle column-level updates with schema validation
+- [ ] Integrate with MVCC for proper versioning
+- [ ] Add transaction support
+- [ ] Write comprehensive tests
+- [ ] Run cargo build, test, fmt, clippy
+
+## 3. FILTER Executor (45 minutes)
+- [ ] Create src/executor/filter.rs
+- [ ] Implement FilterExecutor with predicate evaluation
+- [ ] Support basic comparison operators (=, !=, <, >, <=, >=)
+- [ ] Add AND/OR logical operators
+- [ ] Write tests for various predicates
+- [ ] Run cargo build, test, fmt, clippy
+
+## 4. PROJECTION Executor (30 minutes)
+- [ ] Create src/executor/projection.rs
+- [ ] Implement ProjectionExecutor for column selection
+- [ ] Handle column reordering and aliasing
+- [ ] Optimize memory usage for large result sets
+- [ ] Write tests
+- [ ] Run cargo build, test, fmt, clippy
+
+## 5. Expression Evaluation Framework (1 hour)
+- [ ] Create src/expression.rs module
+- [ ] Define Expression enum for various expression types
+- [ ] Implement expression evaluation logic
+- [ ] Support arithmetic operations (+, -, *, /)
+- [ ] Support comparison operations
+- [ ] Support column references and literals
+- [ ] Write comprehensive tests
+- [ ] Run cargo build, test, fmt, clippy
+
+## 6. LIMIT Executor (30 minutes)
+- [ ] Create src/executor/limit.rs
+- [ ] Implement LimitExecutor with count and offset
+- [ ] Optimize early termination
+- [ ] Write tests
+- [ ] Run cargo build, test, fmt, clippy
+
+## 7. SORT Executor (1 hour)
+- [ ] Create src/executor/sort.rs
+- [ ] Implement SortExecutor with in-memory sorting
+- [ ] Support multiple sort keys and directions (ASC/DESC)
+- [ ] Handle NULL values correctly
+- [ ] Consider external sorting for large datasets (stretch goal)
+- [ ] Write tests for various data types
+- [ ] Run cargo build, test, fmt, clippy
+
+## 8. Integration and Demo (45 minutes)
+- [ ] Create comprehensive demo showing all executors
+- [ ] Add examples for complex queries
+- [ ] Update documentation
+- [ ] Run all tests and ensure everything works together
+- [ ] Final cargo build, test, fmt, clippy
+- [ ] Run ./check_no_mod_rs.sh
+
+Current: Starting high-priority features implementation
+
 # 🚨 ABSOLUTE EXECUTION RULES
 
 ## MANDATORY
