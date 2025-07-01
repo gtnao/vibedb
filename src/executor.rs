@@ -10,24 +10,30 @@ use crate::storage::buffer::BufferPoolManager;
 use anyhow::Result;
 use std::sync::Arc;
 
+pub mod aggregate;
 pub mod delete;
 pub mod filter;
 pub mod filter_builder;
+pub mod hash_join;
 pub mod index_scan;
 pub mod insert;
 pub mod limit;
+pub mod nested_loop_join;
 pub mod projection;
 pub mod seq_scan;
 pub mod sort;
 pub mod update;
 
 // Re-export executors
+pub use aggregate::{AggregateFunction, AggregateSpec, GroupByClause, HashAggregateExecutor};
 pub use delete::DeleteExecutor;
 pub use filter::FilterExecutor;
 pub use filter_builder::FilterBuilder;
+pub use hash_join::HashJoinExecutor;
 pub use index_scan::IndexScanExecutor;
 pub use insert::InsertExecutor;
 pub use limit::LimitExecutor;
+pub use nested_loop_join::NestedLoopJoinExecutor;
 pub use projection::ProjectionExecutor;
 pub use seq_scan::SeqScanExecutor;
 pub use sort::{NullOrder, SortCriteria, SortExecutor, SortOrder};

@@ -21,7 +21,7 @@ impl DataType {
 }
 
 /// Values that can be stored in the database
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Value {
     Null,
     Boolean(bool),

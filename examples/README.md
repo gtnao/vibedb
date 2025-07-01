@@ -150,6 +150,44 @@ Advanced filtering patterns:
 
 Run with: `cargo run --example filter_expressions_advanced`
 
+### 16. Aggregation Basics (`aggregation_basics.rs`)
+Basic aggregate functions without GROUP BY:
+- COUNT(*) - Total row counting
+- SUM() - Calculating totals
+- AVG() - Computing averages
+- MIN() and MAX() - Finding extremes
+- Multiple aggregations in one query
+- Aggregations with WHERE clause filtering
+- Real-world aggregation patterns
+
+Run with: `cargo run --example aggregation_basics`
+
+### 17. GROUP BY Demo (`group_by_demo.rs`)
+GROUP BY with various scenarios:
+- Grouping by single columns
+- Grouping by multiple columns
+- Combining GROUP BY with aggregate functions
+- Sorting aggregated results
+- Post-aggregation filtering (HAVING-like functionality)
+- Complex multi-level grouping
+- Regional and categorical analysis patterns
+- Performance metrics and rankings
+
+Run with: `cargo run --example group_by_demo`
+
+### 18. Sales Analytics (`sales_analytics.rs`)
+Real-world sales analytics using aggregations:
+- Complex multi-table joins with aggregations
+- Top N analysis (best-selling products)
+- Customer segment analysis
+- Time-series aggregations (monthly trends)
+- Category performance rankings
+- Combining filters, joins, aggregations, and sorting
+- Building analytics dashboards
+- Production-ready query patterns
+
+Run with: `cargo run --example sales_analytics`
+
 ## Integration Tests
 
 The `tests/integration_test.rs` file contains integration tests that demonstrate:
@@ -236,7 +274,8 @@ Study `expression_in_action.rs` for:
 1. **Beginners**: Start with `crud_operations.rs` for basic operations
 2. **Intermediate**: Move to `query_operators_demo.rs` for query building
 3. **Advanced**: Explore `expression_in_action.rs` for complex expressions
-4. **Deep Dive**: Study individual executor examples for specific features
+4. **Analytics**: Progress through `aggregation_basics.rs` → `group_by_demo.rs` → `sales_analytics.rs`
+5. **Deep Dive**: Study individual executor examples for specific features
 
 ## Common Patterns
 
@@ -263,4 +302,23 @@ let expr = Expression::binary(
         Expression::literal(Literal::varchar("%pattern%")),
     ),
 );
+```
+
+### Creating Aggregation Queries
+```rust
+// Basic aggregation without GROUP BY
+let agg_expr = vec![
+    (Expression::constant(1), AggregateFunction::Count),
+    (Expression::column(3), AggregateFunction::Sum),
+    (Expression::column(3), AggregateFunction::Avg),
+];
+let mut agg_executor = AggregateExecutor::new(scan, agg_expr, vec![], schema, context);
+
+// GROUP BY with aggregations
+let group_by = vec![Expression::column(2)]; // Group by column 2
+let agg_expr = vec![
+    (Expression::constant(1), AggregateFunction::Count),
+    (Expression::arithmetic(col(4), col(5), BinaryOp::Multiply), AggregateFunction::Sum),
+];
+let mut agg_executor = AggregateExecutor::new(scan, agg_expr, group_by, schema, context);
 ```
