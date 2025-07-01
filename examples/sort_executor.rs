@@ -183,7 +183,13 @@ fn main() -> Result<()> {
             _ => unreachable!(),
         };
         let active = match &values[4] {
-            Value::Boolean(b) => if *b { "Active" } else { "Inactive" },
+            Value::Boolean(b) => {
+                if *b {
+                    "Active"
+                } else {
+                    "Inactive"
+                }
+            }
             _ => unreachable!(),
         };
         println!("{:<10} {}", name, active);
@@ -199,7 +205,8 @@ fn main() -> Result<()> {
     ));
 
     // Filter for active employees only
-    let filter_predicate = Box::new(move |values: &[Value]| matches!(&values[4], Value::Boolean(true)));
+    let filter_predicate =
+        Box::new(move |values: &[Value]| matches!(&values[4], Value::Boolean(true)));
     let filter = Box::new(vibedb::executor::FilterExecutor::new(
         seq_scan4,
         filter_predicate,
