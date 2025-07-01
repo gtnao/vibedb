@@ -1,7 +1,7 @@
 //! Table scanning functionality for sequential access.
 
 use crate::access::tuple::TupleId;
-use crate::access::value::{DataType, Value, deserialize_values};
+use crate::access::value::{deserialize_values, DataType, Value};
 use crate::catalog::CustomDeserializer;
 use crate::storage::buffer::BufferPoolManager;
 use crate::storage::page::PageId;
@@ -100,7 +100,7 @@ impl Iterator for TableScanner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::access::{TableHeap, serialize_values};
+    use crate::access::{serialize_values, TableHeap};
     use crate::storage::buffer::lru::LruReplacer;
     use crate::storage::disk::PageManager;
     use tempfile::tempdir;

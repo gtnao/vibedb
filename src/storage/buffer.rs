@@ -1,15 +1,15 @@
 pub mod lru;
 pub mod replacer;
 
-use crate::storage::{PAGE_SIZE, PageId, PageManager};
+use crate::storage::{PageId, PageManager, PAGE_SIZE};
 use anyhow::Result;
 use dashmap::DashMap;
 use parking_lot::{Mutex, RwLock};
 use replacer::{FrameId, Replacer};
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::Arc;
 
 pub struct Frame {
     data: Box<[u8; PAGE_SIZE]>,

@@ -1,8 +1,8 @@
 //! Utility functions for page operations.
 
-use crate::storage::PAGE_SIZE;
 use crate::storage::buffer::PageReadGuard;
 use crate::storage::page::HeapPage;
+use crate::storage::PAGE_SIZE;
 
 /// Create a temporary HeapPage view from a PageReadGuard.
 ///
@@ -24,8 +24,8 @@ pub fn heap_page_from_guard(guard: &PageReadGuard) -> HeapPage<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::buffer::BufferPoolManager;
     use crate::storage::buffer::lru::LruReplacer;
+    use crate::storage::buffer::BufferPoolManager;
     use crate::storage::disk::PageManager;
     use anyhow::Result;
     use tempfile::tempdir;

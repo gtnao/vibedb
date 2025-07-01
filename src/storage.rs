@@ -15,7 +15,8 @@ pub mod buffer;
 pub mod disk;
 pub mod error;
 pub mod page;
+pub mod wal;
 
 pub use buffer::{BufferPoolManager, PageReadGuard, PageWriteGuard};
-pub use disk::{PAGE_SIZE, PageManager};
+pub use disk::{PageManager, PAGE_SIZE};
 pub use page::{HeapPage, Page, PageId};

@@ -2,10 +2,10 @@
 use crate::access::Value;
 use crate::access::{DataType, TableHeap};
 use crate::catalog::Catalog;
-use crate::storage::buffer::BufferPoolManager;
 use crate::storage::buffer::lru::LruReplacer;
+use crate::storage::buffer::BufferPoolManager;
 use crate::storage::disk::PageManager;
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use std::path::Path;
 use std::sync::Arc;
 

@@ -2,7 +2,7 @@
 
 use crate::access::{DataType, Value};
 use crate::catalog::table_info::TableId;
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ColumnInfo {

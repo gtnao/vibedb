@@ -1,5 +1,5 @@
-use crate::access::value::{DataType, Value, deserialize_values, serialize_values};
-use anyhow::{Result, bail};
+use crate::access::value::{deserialize_values, serialize_values, DataType, Value};
+use anyhow::{bail, Result};
 use std::cmp::Ordering;
 
 /// Represents a key in the B+Tree

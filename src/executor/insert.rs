@@ -1,8 +1,8 @@
 //! Insert executor implementation.
 
-use crate::access::{DataType, TableHeap, Tuple, TupleId, Value, btree::BTree};
+use crate::access::{btree::BTree, DataType, TableHeap, Tuple, TupleId, Value};
 use crate::executor::{ColumnInfo, ExecutionContext, Executor};
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 
 /// Executor for inserting rows into a table
 pub struct InsertExecutor {

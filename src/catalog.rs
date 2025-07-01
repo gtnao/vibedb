@@ -4,10 +4,10 @@ pub mod index_info;
 pub mod system_tables;
 pub mod table_info;
 
-use crate::access::{DataType, TableHeap, Value, btree::BTree};
+use crate::access::{btree::BTree, DataType, TableHeap, Value};
 use crate::storage::buffer::BufferPoolManager;
 use crate::storage::page::PageId;
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use std::collections::HashMap;
 use std::sync::RwLock;
 
@@ -842,11 +842,9 @@ mod tests {
         let tables = catalog.list_tables()?;
         assert_eq!(tables.len(), 3); // pg_tables, pg_attribute, and pg_index
         assert!(tables.iter().any(|t| t.table_name == CATALOG_TABLE_NAME));
-        assert!(
-            tables
-                .iter()
-                .any(|t| t.table_name == CATALOG_ATTR_TABLE_NAME)
-        );
+        assert!(tables
+            .iter()
+            .any(|t| t.table_name == CATALOG_ATTR_TABLE_NAME));
 
         // Create more tables
         catalog.create_table("users")?;

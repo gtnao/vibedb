@@ -1,6 +1,6 @@
-use crate::storage::PAGE_SIZE;
 use crate::storage::error::{StorageError, StorageResult};
 use crate::storage::page::{Page, PageId};
+use crate::storage::PAGE_SIZE;
 
 // Header structure (20 bytes) - PostgreSQL style
 const HEADER_SIZE: usize = 20;

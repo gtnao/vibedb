@@ -5,14 +5,14 @@ pub mod latch;
 use self::iterator::BTreeIterator;
 use self::key::BTreeKey;
 use self::latch::{LatchCoupling, LatchManager, LatchMode};
+use crate::access::value::{serialize_values, DataType, Value};
 use crate::access::TupleId;
-use crate::access::value::{DataType, Value, serialize_values};
 use crate::catalog::ColumnInfo;
-use crate::storage::PAGE_SIZE;
 use crate::storage::buffer::BufferPoolManager;
 use crate::storage::page::btree_internal_page::BTreeInternalPage;
 use crate::storage::page::btree_leaf_page::BTreeLeafPage;
 use crate::storage::page::{Page, PageId};
+use crate::storage::PAGE_SIZE;
 use anyhow::Result;
 use std::sync::Arc;
 

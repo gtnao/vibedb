@@ -1,3 +1,41 @@
+# TODO: Transaction Implementation
+
+- [x] Create src/transaction/id.rs for transaction ID generation
+- [x] Create src/transaction/state.rs for transaction state management  
+- [x] Create src/transaction/manager.rs for transaction manager
+- [x] Define TransactionId type and generation logic in id.rs
+- [x] Define TransactionState enum (Active, Committed, Aborted) in state.rs
+- [x] Implement basic transaction lifecycle (begin, commit, abort) in manager.rs
+- [x] Add thread-safe transaction table for tracking active transactions
+- [x] Add tests for each component
+- [x] Run cargo build, test, fmt, clippy
+- [x] Update src/transaction.rs to declare submodules
+
+Current: Completed basic transaction implementation
+
+# TODO: MVCC Implementation
+
+- [x] Update src/concurrency.rs to declare submodules
+- [x] Create src/concurrency/mvcc.rs for MVCC core logic
+- [x] Create src/concurrency/timestamp.rs for timestamp ordering
+- [x] Create src/concurrency/version.rs for version management
+- [x] Create src/concurrency/lock.rs for lock management
+- [x] Implement version chain for tuples (keep multiple versions)
+- [x] Implement timestamp-based visibility rules
+- [x] Implement read/write lock management
+- [x] Add isolation level support (Read Committed, Repeatable Read, Serializable)
+- [x] Add tests for timestamp module
+- [x] Add tests for version module
+- [x] Add tests for lock module
+- [x] Add tests for mvcc module
+- [x] Run cargo build
+- [x] Run cargo test
+- [x] Run cargo fmt
+- [x] Run cargo clippy
+- [x] Run ./check_no_mod_rs.sh
+
+Current: Completed MVCC implementation
+
 # TODO: B+Tree Index Implementation
 
 docsにある`btree_*.md`ドキュメントを適宜参考に実装してください。

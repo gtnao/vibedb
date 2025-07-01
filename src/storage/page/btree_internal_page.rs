@@ -1,4 +1,4 @@
-use crate::storage::{PAGE_SIZE, Page, PageId};
+use crate::storage::{Page, PageId, PAGE_SIZE};
 
 const BTREE_INTERNAL_HEADER_SIZE: usize = 24;
 pub const MIN_KEYS_PER_INTERNAL_PAGE: usize = 2;

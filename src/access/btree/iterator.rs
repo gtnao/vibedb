@@ -1,11 +1,11 @@
-use crate::access::TupleId;
 use crate::access::btree::key::BTreeKey;
 use crate::access::value::DataType;
-use crate::storage::PAGE_SIZE;
+use crate::access::TupleId;
 use crate::storage::buffer::BufferPoolManager;
-use crate::storage::page::PageId;
 use crate::storage::page::btree_leaf_page::BTreeLeafPage;
-use anyhow::{Result, bail};
+use crate::storage::page::PageId;
+use crate::storage::PAGE_SIZE;
+use anyhow::{bail, Result};
 
 /// Direction of iteration
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -598,10 +598,10 @@ impl Drop for BTreeIterator {
 mod tests {
     use super::*;
     use crate::access::value::{DataType, Value};
-    use crate::storage::buffer::{BufferPoolManager, lru};
+    use crate::storage::buffer::{lru, BufferPoolManager};
     use crate::storage::disk::PageManager;
-    use crate::storage::page::Page;
     use crate::storage::page::btree_leaf_page::BTreeLeafPage;
+    use crate::storage::page::Page;
     use tempfile::TempDir;
 
     fn create_test_leaf_page(

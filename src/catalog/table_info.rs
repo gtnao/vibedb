@@ -2,7 +2,7 @@
 
 use crate::access::{DataType, Value};
 use crate::storage::page::PageId;
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TableId(pub u32);

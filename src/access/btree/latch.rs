@@ -1,5 +1,5 @@
 use crate::storage::page::PageId;
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::thread;

@@ -9,7 +9,7 @@ use crate::{
         value::Value,
     },
     catalog::index_info::IndexInfo,
-    storage::{PAGE_SIZE, buffer::BufferPoolManager},
+    storage::{buffer::BufferPoolManager, PAGE_SIZE},
 };
 
 use super::{ColumnInfo, ExecutionContext, Executor};
@@ -177,7 +177,7 @@ mod tests {
         access::value::DataType,
         catalog::Catalog,
         database::Database,
-        executor::{ExecutionContext, insert::InsertExecutor},
+        executor::{insert::InsertExecutor, ExecutionContext},
         storage::{buffer::BufferPoolManager, disk::page_manager::PageManager},
     };
     use std::sync::Arc;
@@ -394,12 +394,10 @@ mod tests {
         // Try to get next without init
         let result = executor.next();
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Executor not initialized")
-        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Executor not initialized"));
 
         Ok(())
     }

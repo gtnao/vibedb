@@ -4,8 +4,9 @@ pub mod heap_page;
 pub mod utils;
 
 use crate::storage::PAGE_SIZE;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PageId(pub u32);
 
 impl std::fmt::Display for PageId {

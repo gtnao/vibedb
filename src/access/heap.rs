@@ -1,5 +1,5 @@
 use crate::access::tuple::{Tuple, TupleId};
-use crate::access::value::{DataType, Value, serialize_values};
+use crate::access::value::{serialize_values, DataType, Value};
 use crate::catalog::TableId;
 use crate::storage::buffer::BufferPoolManager;
 use crate::storage::page::{HeapPage, PageId};

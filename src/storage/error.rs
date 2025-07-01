@@ -21,7 +21,10 @@ pub enum StorageError {
     PageNotFound(crate::storage::page::PageId),
 
     #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
+    IoError(std::io::Error),
+
+    #[error("Serialization error: {0}")]
+    SerializationError(String),
 
     #[error("Other error: {0}")]
     Other(String),
@@ -29,3 +32,9 @@ pub enum StorageError {
 
 /// Result type for storage operations.
 pub type StorageResult<T> = Result<T, StorageError>;
+
+impl From<std::io::Error> for StorageError {
+    fn from(error: std::io::Error) -> Self {
+        StorageError::IoError(error)
+    }
+}

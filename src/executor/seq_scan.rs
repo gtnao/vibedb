@@ -4,7 +4,7 @@
 use crate::access::TableHeap;
 use crate::access::{TableScanner, Tuple};
 use crate::executor::{ColumnInfo, ExecutionContext, Executor};
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 
 /// Executor for sequential table scans
 pub struct SeqScanExecutor {

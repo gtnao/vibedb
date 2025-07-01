@@ -1,5 +1,5 @@
 use crate::access::TupleId;
-use crate::storage::{PAGE_SIZE, Page, PageId};
+use crate::storage::{Page, PageId, PAGE_SIZE};
 
 const BTREE_LEAF_HEADER_SIZE: usize = 32;
 pub const MIN_KEYS_PER_LEAF_PAGE: usize = 2;
@@ -185,7 +185,11 @@ impl BTreeLeafPage {
 
     pub fn next_page_id(&self) -> Option<PageId> {
         let id = self.header().next_page_id();
-        if id == 0 { None } else { Some(PageId(id)) }
+        if id == 0 {
+            None
+        } else {
+            Some(PageId(id))
+        }
     }
 
     pub fn set_next_page_id(&mut self, page_id: Option<PageId>) {
@@ -196,7 +200,11 @@ impl BTreeLeafPage {
 
     pub fn prev_page_id(&self) -> Option<PageId> {
         let id = self.header().prev_page_id();
-        if id == 0 { None } else { Some(PageId(id)) }
+        if id == 0 {
+            None
+        } else {
+            Some(PageId(id))
+        }
     }
 
     pub fn set_prev_page_id(&mut self, page_id: Option<PageId>) {
@@ -1496,10 +1504,9 @@ mod tests {
 
         // Try to insert one more - should fail
         let key = b"extra_key";
-        assert!(
-            page.insert_key_value(key, TupleId::new(PageId(999), 999))
-                .is_err()
-        );
+        assert!(page
+            .insert_key_value(key, TupleId::new(PageId(999), 999))
+            .is_err());
     }
 
     #[test]
@@ -1517,10 +1524,9 @@ mod tests {
         assert_eq!(page.slot_count(), 3);
 
         // Delete specific key-value pair
-        assert!(
-            page.delete_key_value(b"key2", TupleId::new(PageId(20), 2))
-                .is_ok()
-        );
+        assert!(page
+            .delete_key_value(b"key2", TupleId::new(PageId(20), 2))
+            .is_ok());
         assert_eq!(page.slot_count(), 2);
 
         // Verify remaining keys
@@ -1528,14 +1534,12 @@ mod tests {
         assert_eq!(page.get_key(1).unwrap(), b"key3");
 
         // Try to delete non-existent key-value pair
-        assert!(
-            page.delete_key_value(b"key2", TupleId::new(PageId(20), 2))
-                .is_err()
-        );
-        assert!(
-            page.delete_key_value(b"key4", TupleId::new(PageId(40), 4))
-                .is_err()
-        );
+        assert!(page
+            .delete_key_value(b"key2", TupleId::new(PageId(20), 2))
+            .is_err());
+        assert!(page
+            .delete_key_value(b"key4", TupleId::new(PageId(40), 4))
+            .is_err());
     }
 
     #[test]
@@ -1555,10 +1559,9 @@ mod tests {
         assert_eq!(page.slot_count(), 4);
 
         // Delete specific duplicate
-        assert!(
-            page.delete_key_value(b"key1", TupleId::new(PageId(10), 2))
-                .is_ok()
-        );
+        assert!(page
+            .delete_key_value(b"key1", TupleId::new(PageId(10), 2))
+            .is_ok());
         assert_eq!(page.slot_count(), 3);
 
         // Verify remaining duplicates

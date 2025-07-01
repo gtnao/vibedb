@@ -20,4 +20,4 @@ pub mod value;
 pub use heap::TableHeap;
 pub use scan::TableScanner;
 pub use tuple::{Tuple, TupleId};
-pub use value::{DataType, Value, deserialize_values, serialize_values};
+pub use value::{deserialize_values, serialize_values, DataType, Value};

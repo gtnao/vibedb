@@ -1,12 +1,14 @@
 [package]
 name = "vibedb"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
 anyhow = "1.0"
+bincode = "1.3"
 dashmap = "6.0"
 parking_lot = "0.12"
+serde = { version = "1.0", features = ["derive"] }
 thiserror = "1.0"
 
 [dev-dependencies]
