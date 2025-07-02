@@ -145,11 +145,15 @@ fn main() -> Result<()> {
     ));
 
     // First filter for in_stock = true
-    let filter_predicate =
-        Box::new(move |values: &[Value]| matches!(&values[4], Value::Boolean(true)));
+    use vibedb::expression::{BinaryOperator, Expression};
+    let filter_expr = Expression::binary_op(
+        BinaryOperator::Eq,
+        Expression::column(4),
+        Expression::literal(Value::Boolean(true)),
+    );
     let filter = Box::new(vibedb::executor::FilterExecutor::new(
         seq_scan3,
-        filter_predicate,
+        filter_expr,
     ));
 
     // Then project columns 1 (name) and 4 (in_stock)

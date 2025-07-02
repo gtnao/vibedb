@@ -193,7 +193,7 @@ fn demonstrate_filter_operations(database: &Database) -> Result<()> {
                 _ => "?",
             },
             match &values[3] {
-                Value::Int32(cents) => format!("{:.2}", cents as f64 / 100.0),
+                Value::Int32(cents) => format!("{:.2}", *cents as f64 / 100.0),
                 _ => "?".to_string(),
             }
         );
@@ -224,7 +224,7 @@ fn demonstrate_filter_operations(database: &Database) -> Result<()> {
                 _ => "?",
             },
             match &values[3] {
-                Value::Int32(cents) => format!("{:.2}", cents as f64 / 100.0),
+                Value::Int32(cents) => format!("{:.2}", *cents as f64 / 100.0),
                 _ => "?".to_string(),
             }
         );
@@ -291,7 +291,7 @@ fn demonstrate_projection_operations(database: &Database) -> Result<()> {
                 _ => "?",
             },
             match &values[1] {
-                Value::Int32(cents) => format!("{:.2}", cents as f64 / 100.0),
+                Value::Int32(cents) => format!("{:.2}", *cents as f64 / 100.0),
                 _ => "?".to_string(),
             }
         );
@@ -365,7 +365,7 @@ fn demonstrate_sort_operations(database: &Database) -> Result<()> {
                 _ => "?",
             },
             match &values[3] {
-                Value::Int32(cents) => format!("{:.2}", cents as f64 / 100.0),
+                Value::Int32(cents) => format!("{:.2}", *cents as f64 / 100.0),
                 _ => "?".to_string(),
             }
         );
@@ -424,7 +424,7 @@ fn demonstrate_sort_operations(database: &Database) -> Result<()> {
                 _ => "?",
             },
             match &values[3] {
-                Value::Int32(cents) => format!("{:.2}", cents as f64 / 100.0),
+                Value::Int32(cents) => format!("{:.2}", *cents as f64 / 100.0),
                 _ => "?".to_string(),
             }
         );
@@ -615,7 +615,7 @@ fn demonstrate_complex_pipeline(database: &Database) -> Result<()> {
                 _ => "?",
             },
             match &values[3] {
-                Value::Int32(cents) => format!("{:.2}", cents as f64 / 100.0),
+                Value::Int32(cents) => format!("{:.2}", *cents as f64 / 100.0),
                 _ => "?".to_string(),
             },
             match &values[5] {

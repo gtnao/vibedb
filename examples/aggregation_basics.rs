@@ -1,19 +1,19 @@
 //! Basic aggregation functions without GROUP BY
-//! 
+//!
 //! This example demonstrates the use of aggregate functions (COUNT, SUM, AVG, MIN, MAX)
 //! on entire tables without grouping.
 
 use anyhow::Result;
+use std::path::Path;
 use vibedb::{
-    access::{DataType, Value, deserialize_values},
+    access::{deserialize_values, DataType, Value},
     database::Database,
     executor::{
-        AggregateFunction, AggregateSpec, GroupByClause, HashAggregateExecutor, 
-        ExecutionContext, Executor, SeqScanExecutor, FilterExecutor, InsertExecutor,
+        AggregateFunction, AggregateSpec, ExecutionContext, Executor, FilterExecutor,
+        GroupByClause, HashAggregateExecutor, InsertExecutor, SeqScanExecutor,
     },
     expression::{BinaryOperator, Expression},
 };
-use std::path::Path;
 
 // Helper function to display values
 fn value_to_string(value: &Value) -> String {
@@ -63,25 +63,20 @@ fn main() -> Result<()> {
 
     println!("=== Inserting Employee Data ===");
     let context = ExecutionContext::new(database.catalog.clone(), database.buffer_pool.clone());
-    
+
     for (id, name, dept, salary) in employees {
-        let values = vec![
-            vec![
-                Value::Int32(id),
-                Value::String(name.to_string()),
-                Value::String(dept.to_string()),
-                Value::Int32(salary),
-            ],
-        ];
-        
-        let mut insert_executor = InsertExecutor::new(
-            "employees".to_string(),
-            values,
-            context.clone(),
-        );
+        let values = vec![vec![
+            Value::Int32(id),
+            Value::String(name.to_string()),
+            Value::String(dept.to_string()),
+            Value::Int32(salary),
+        ]];
+
+        let mut insert_executor =
+            InsertExecutor::new("employees".to_string(), values, context.clone());
         insert_executor.init()?;
         insert_executor.next()?;
-        
+
         println!("Inserted: {} - {} - {} - ${}", id, name, dept, salary);
     }
     println!();
@@ -96,21 +91,15 @@ fn main() -> Result<()> {
 
         // No GROUP BY - empty clause
         let group_by = GroupByClause::new(vec![]);
-        
-        // COUNT(*) - count all rows
-        let aggregates = vec![
-            AggregateSpec::with_alias(
-                AggregateFunction::Count,
-                None, // None means COUNT(*)
-                "count".to_string(),
-            ),
-        ];
 
-        let mut agg_executor = HashAggregateExecutor::new(
-            scan,
-            group_by,
-            aggregates,
-        )?;
+        // COUNT(*) - count all rows
+        let aggregates = vec![AggregateSpec::with_alias(
+            AggregateFunction::Count,
+            None, // None means COUNT(*)
+            "count".to_string(),
+        )];
+
+        let mut agg_executor = HashAggregateExecutor::new(scan, group_by, aggregates)?;
 
         agg_executor.init()?;
         if let Some(tuple) = agg_executor.next()? {
@@ -131,20 +120,14 @@ fn main() -> Result<()> {
         ));
 
         let group_by = GroupByClause::new(vec![]);
-        
-        let aggregates = vec![
-            AggregateSpec::with_alias(
-                AggregateFunction::Sum,
-                Some(3), // salary is column index 3
-                "total_salary".to_string(),
-            ),
-        ];
 
-        let mut agg_executor = HashAggregateExecutor::new(
-            scan,
-            group_by,
-            aggregates,
-        )?;
+        let aggregates = vec![AggregateSpec::with_alias(
+            AggregateFunction::Sum,
+            Some(3), // salary is column index 3
+            "total_salary".to_string(),
+        )];
+
+        let mut agg_executor = HashAggregateExecutor::new(scan, group_by, aggregates)?;
 
         agg_executor.init()?;
         if let Some(tuple) = agg_executor.next()? {
@@ -165,20 +148,14 @@ fn main() -> Result<()> {
         ));
 
         let group_by = GroupByClause::new(vec![]);
-        
-        let aggregates = vec![
-            AggregateSpec::with_alias(
-                AggregateFunction::Avg,
-                Some(3), // salary column
-                "avg_salary".to_string(),
-            ),
-        ];
 
-        let mut agg_executor = HashAggregateExecutor::new(
-            scan,
-            group_by,
-            aggregates,
-        )?;
+        let aggregates = vec![AggregateSpec::with_alias(
+            AggregateFunction::Avg,
+            Some(3), // salary column
+            "avg_salary".to_string(),
+        )];
+
+        let mut agg_executor = HashAggregateExecutor::new(scan, group_by, aggregates)?;
 
         agg_executor.init()?;
         if let Some(tuple) = agg_executor.next()? {
@@ -199,7 +176,7 @@ fn main() -> Result<()> {
         ));
 
         let group_by = GroupByClause::new(vec![]);
-        
+
         let aggregates = vec![
             AggregateSpec::with_alias(
                 AggregateFunction::Min,
@@ -213,11 +190,7 @@ fn main() -> Result<()> {
             ),
         ];
 
-        let mut agg_executor = HashAggregateExecutor::new(
-            scan,
-            group_by,
-            aggregates,
-        )?;
+        let mut agg_executor = HashAggregateExecutor::new(scan, group_by, aggregates)?;
 
         agg_executor.init()?;
         if let Some(tuple) = agg_executor.next()? {
@@ -239,7 +212,7 @@ fn main() -> Result<()> {
         ));
 
         let group_by = GroupByClause::new(vec![]);
-        
+
         let aggregates = vec![
             AggregateSpec::with_alias(
                 AggregateFunction::Count,
@@ -258,11 +231,7 @@ fn main() -> Result<()> {
             ),
         ];
 
-        let mut agg_executor = HashAggregateExecutor::new(
-            scan,
-            group_by,
-            aggregates,
-        )?;
+        let mut agg_executor = HashAggregateExecutor::new(scan, group_by, aggregates)?;
 
         agg_executor.init()?;
         if let Some(tuple) = agg_executor.next()? {
@@ -296,7 +265,7 @@ fn main() -> Result<()> {
         let filter = Box::new(FilterExecutor::new(scan, filter_expr));
 
         let group_by = GroupByClause::new(vec![]);
-        
+
         let aggregates = vec![
             AggregateSpec::with_alias(
                 AggregateFunction::Count,
@@ -315,11 +284,7 @@ fn main() -> Result<()> {
             ),
         ];
 
-        let mut agg_executor = HashAggregateExecutor::new(
-            filter,
-            group_by,
-            aggregates,
-        )?;
+        let mut agg_executor = HashAggregateExecutor::new(filter, group_by, aggregates)?;
 
         agg_executor.init()?;
         if let Some(tuple) = agg_executor.next()? {

@@ -191,16 +191,15 @@ fn main() -> Result<()> {
     ));
 
     // Filter for products with price > 10000 cents ($100)
-    let filter_predicate = Box::new(move |values: &[Value]| {
-        if let Value::Int32(price_cents) = &values[2] {
-            *price_cents > 10000
-        } else {
-            false
-        }
-    });
+    use vibedb::expression::{BinaryOperator, Expression};
+    let filter_expr = Expression::binary_op(
+        BinaryOperator::Gt,
+        Expression::column(2), // price_cents column
+        Expression::literal(Value::Int32(10000)),
+    );
     let filter = Box::new(vibedb::executor::FilterExecutor::new(
         seq_scan6,
-        filter_predicate,
+        filter_expr,
     ));
 
     let mut limit6 = LimitExecutor::new(filter, 3);

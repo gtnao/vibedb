@@ -1,21 +1,38 @@
 //! Real-world sales analytics example using aggregations
-//! 
+//!
 //! This example demonstrates a comprehensive sales analytics scenario
 //! combining various aggregation techniques with joins, filters, and sorting.
 
 use anyhow::Result;
+use std::path::Path;
 use vibedb::{
-    access::{DataType, Value},
+    access::{deserialize_values, DataType, Value},
     database::Database,
     executor::{
-        AggregateFunction, AggregateSpec, GroupByClause, HashAggregateExecutor, 
-        ExecutionContext, Executor, SeqScanExecutor, InsertExecutor,
-        SortExecutor, SortCriteria, SortOrder, NullOrder,
-        FilterExecutor, NestedLoopJoinExecutor, LimitExecutor,
+        AggregateFunction, AggregateSpec, ExecutionContext, Executor, FilterExecutor,
+        GroupByClause, HashAggregateExecutor, InsertExecutor, LimitExecutor,
+        NestedLoopJoinExecutor, NullOrder, SeqScanExecutor, SortCriteria, SortExecutor, SortOrder,
     },
     expression::{BinaryOperator, Expression},
 };
-use std::path::Path;
+
+// Helper function to format Value for display
+fn format_value(value: &Value) -> String {
+    match value {
+        Value::Int32(i) => i.to_string(),
+        Value::String(s) => s.clone(),
+        Value::Boolean(b) => b.to_string(),
+        Value::Null => "NULL".to_string(),
+    }
+}
+
+// Helper function to format price
+fn format_price(value: &Value) -> String {
+    match value {
+        Value::Int32(cents) => format!("{:.2}", *cents as f64 / 100.0),
+        _ => "?".to_string(),
+    }
+}
 
 fn main() -> Result<()> {
     println!("=== Sales Analytics Demo ===\n");
@@ -30,7 +47,7 @@ fn main() -> Result<()> {
     println!("Created database: sales_analytics.db");
 
     // Create tables for a sales analytics scenario
-    
+
     // 1. orders table (order_id, customer_id, order_date, total_amount, status)
     database.create_table_with_columns(
         "orders",
@@ -83,7 +100,7 @@ fn main() -> Result<()> {
 
     // Insert sample data
     println!("=== Loading Sample Data ===");
-    
+
     // Insert customers
     let customers = vec![
         (1, "TechCorp", "North", "Enterprise"),
@@ -92,7 +109,7 @@ fn main() -> Result<()> {
         (4, "LocalShop", "South", "SMB"),
         (5, "GlobalTrade", "North", "Enterprise"),
     ];
-    
+
     for (id, name, region, segment) in customers {
         let values = vec![vec![
             Value::Int32(id),
@@ -116,7 +133,7 @@ fn main() -> Result<()> {
         (7, "Keyboard Mechanical", "Electronics", 1),
         (8, "Webcam HD", "Electronics", 3),
     ];
-    
+
     for (id, name, category, supplier) in products {
         let values = vec![vec![
             Value::Int32(id),
@@ -142,7 +159,7 @@ fn main() -> Result<()> {
         (9, 1, "2024-03-25", 3200, "Completed"),
         (10, 5, "2024-03-30", 7800, "Completed"),
     ];
-    
+
     for (id, customer, date, amount, status) in orders {
         let values = vec![vec![
             Value::Int32(id),
@@ -169,7 +186,7 @@ fn main() -> Result<()> {
         (6, 3, 5, 2, 800),
         // Add more items as needed...
     ];
-    
+
     for (id, order, product, qty, price) in order_items {
         let values = vec![vec![
             Value::Int32(id),
@@ -182,7 +199,7 @@ fn main() -> Result<()> {
         insert.init()?;
         insert.next()?;
     }
-    
+
     println!("Sample data loaded successfully!");
     println!();
 
@@ -201,17 +218,13 @@ fn main() -> Result<()> {
         ));
 
         // Join condition: order_items.product_id = products.product_id
-        let join_condition = Expression::binary(
-            BinaryOperator::Equal,
+        let join_condition = Expression::binary_op(
+            BinaryOperator::Eq,
             Expression::column(2), // order_items.product_id
             Expression::column(5), // products.product_id (offset by 5 in joined tuple)
         );
 
-        let join_executor = NestedLoopJoinExecutor::new(
-            item_scan,
-            product_scan,
-            join_condition,
-        );
+        let join_executor = NestedLoopJoinExecutor::new(item_scan, product_scan, join_condition);
 
         // Group by product_name (column 6), category (column 7)
         let group_by = GroupByClause::new(vec![6, 7]);
@@ -229,40 +242,37 @@ fn main() -> Result<()> {
             ),
         ];
 
-        let agg_executor = HashAggregateExecutor::new(
-            Box::new(join_executor),
-            group_by,
-            aggregates,
-        )?;
+        let agg_executor =
+            HashAggregateExecutor::new(Box::new(join_executor), group_by, aggregates)?;
 
         // Sort by units sold descending
         let sort_criteria = vec![SortCriteria {
-            column_idx: 2, // units_sold column
+            column_index: 2, // units_sold column
             order: SortOrder::Desc,
-            null_order: NullOrder::NullsLast,
+            null_order: NullOrder::Last,
         }];
 
-        let sort_executor = SortExecutor::new(
-            Box::new(agg_executor),
-            sort_criteria,
-        );
+        let sort_executor = SortExecutor::new(Box::new(agg_executor), sort_criteria);
 
         // Limit to top 5
-        let mut limit_executor = LimitExecutor::new(
-            Box::new(sort_executor),
-            5,
-        );
+        let mut limit_executor = LimitExecutor::new(Box::new(sort_executor), 5);
 
         limit_executor.init()?;
-        println!("{:<25} {:<15} {:<15} {:<15}", "Product", "Category", "Units Sold", "Orders");
+        println!(
+            "{:<25} {:<15} {:<15} {:<15}",
+            "Product", "Category", "Units Sold", "Orders"
+        );
         println!("{:-<70}", "");
         while let Some(tuple) = limit_executor.next()? {
-            let values = tuple.get_values();
-            println!("{:<25} {:<15} {:<15} {:<15}", 
-                values[0],  // product_name
-                values[1],  // category
-                values[2],  // units sold
-                values[3]   // order count
+            let schema = limit_executor.output_schema();
+            let data_types: Vec<DataType> = schema.iter().map(|col| col.data_type).collect();
+            let values = deserialize_values(&tuple.data, &data_types)?;
+            println!(
+                "{:<25} {:<15} {:<15} {:<15}",
+                format_value(&values[0]), // product_name
+                format_value(&values[1]), // category
+                format_value(&values[2]), // units sold
+                format_value(&values[3])  // order count
             );
         }
     }
@@ -272,10 +282,7 @@ fn main() -> Result<()> {
     println!("=== Analysis 2: Revenue by Customer Segment ===");
     {
         // Join orders with customers
-        let order_scan = Box::new(SeqScanExecutor::new(
-            "orders".to_string(),
-            context.clone(),
-        ));
+        let order_scan = Box::new(SeqScanExecutor::new("orders".to_string(), context.clone()));
 
         let customer_scan = Box::new(SeqScanExecutor::new(
             "customers".to_string(),
@@ -283,39 +290,28 @@ fn main() -> Result<()> {
         ));
 
         // Join condition: orders.customer_id = customers.customer_id
-        let join_condition = Expression::binary(
-            BinaryOperator::Equal,
+        let join_condition = Expression::binary_op(
+            BinaryOperator::Eq,
             Expression::column(1), // orders.customer_id
             Expression::column(5), // customers.customer_id (offset by 5)
         );
 
-        let join_executor = NestedLoopJoinExecutor::new(
-            order_scan,
-            customer_scan,
-            join_condition,
-        );
+        let join_executor = NestedLoopJoinExecutor::new(order_scan, customer_scan, join_condition);
 
         // Filter for completed orders only
-        let status_filter = Expression::binary(
-            BinaryOperator::Equal,
+        let status_filter = Expression::binary_op(
+            BinaryOperator::Eq,
             Expression::column(4), // status
             Expression::literal(Value::String("Completed".to_string())),
         );
 
-        let filter_executor = FilterExecutor::new(
-            Box::new(join_executor),
-            status_filter,
-        );
+        let filter_executor = FilterExecutor::new(Box::new(join_executor), status_filter);
 
         // Group by segment (column 8), region (column 7)
         let group_by = GroupByClause::new(vec![8, 7]);
 
         let aggregates = vec![
-            AggregateSpec::with_alias(
-                AggregateFunction::Count,
-                None,
-                "order_count".to_string(),
-            ),
+            AggregateSpec::with_alias(AggregateFunction::Count, None, "order_count".to_string()),
             AggregateSpec::with_alias(
                 AggregateFunction::Sum,
                 Some(3), // total_amount
@@ -328,23 +324,26 @@ fn main() -> Result<()> {
             ),
         ];
 
-        let mut agg_executor = HashAggregateExecutor::new(
-            Box::new(filter_executor),
-            group_by,
-            aggregates,
-        )?;
+        let mut agg_executor =
+            HashAggregateExecutor::new(Box::new(filter_executor), group_by, aggregates)?;
 
         agg_executor.init()?;
-        println!("{:<15} {:<10} {:<12} {:<15} {:<20}", "Segment", "Region", "Orders", "Total Revenue", "Avg Order Value");
+        println!(
+            "{:<15} {:<10} {:<12} {:<15} {:<20}",
+            "Segment", "Region", "Orders", "Total Revenue", "Avg Order Value"
+        );
         println!("{:-<72}", "");
         while let Some(tuple) = agg_executor.next()? {
-            let values = tuple.get_values();
-            println!("{:<15} {:<10} {:<12} ${:<14} ${:<19}", 
-                values[0],  // segment
-                values[1],  // region
-                values[2],  // order count
-                values[3],  // total revenue
-                values[4]   // avg order value
+            let schema = agg_executor.output_schema();
+            let data_types: Vec<DataType> = schema.iter().map(|col| col.data_type).collect();
+            let values = deserialize_values(&tuple.data, &data_types)?;
+            println!(
+                "{:<15} {:<10} {:<12} ${:<14} ${:<19}",
+                format_value(&values[0]), // segment
+                format_value(&values[1]), // region
+                format_value(&values[2]), // order count
+                format_price(&values[3]), // total revenue
+                format_price(&values[4])  // avg order value
             );
         }
     }
@@ -361,29 +360,26 @@ fn main() -> Result<()> {
         // Group by category
         let group_by = GroupByClause::new(vec![2]); // category column
 
-        let aggregates = vec![
-            AggregateSpec::with_alias(
-                AggregateFunction::Count,
-                None,
-                "product_count".to_string(),
-            ),
-        ];
+        let aggregates = vec![AggregateSpec::with_alias(
+            AggregateFunction::Count,
+            None,
+            "product_count".to_string(),
+        )];
 
-        let mut agg_executor = HashAggregateExecutor::new(
-            product_scan,
-            group_by,
-            aggregates,
-        )?;
+        let mut agg_executor = HashAggregateExecutor::new(product_scan, group_by, aggregates)?;
 
         agg_executor.init()?;
         println!("{:<15} {:<15}", "Category", "Product Count");
         println!("{:-<30}", "");
-        
+
         while let Some(tuple) = agg_executor.next()? {
-            let values = tuple.get_values();
-            println!("{:<15} {:<15}", 
-                values[0],  // category
-                values[1]   // product count
+            let schema = agg_executor.output_schema();
+            let data_types: Vec<DataType> = schema.iter().map(|col| col.data_type).collect();
+            let values = deserialize_values(&tuple.data, &data_types)?;
+            println!(
+                "{:<15} {:<15}",
+                format_value(&values[0]), // category
+                format_value(&values[1])  // product count
             );
         }
     }

@@ -21,7 +21,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Simulate some work with locks
         let page_id = PageId(1);
-        lock_manager.acquire_lock(tx_id, LockId::Page(page_id), LockMode::Exclusive, None)?;
+        lock_manager.acquire_lock(tx_id.0, LockId::Page(page_id), LockMode::Exclusive, None)?;
         println!("Acquired exclusive lock on page {:?}", page_id);
 
         // Commit transaction
@@ -29,7 +29,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Transaction {} committed successfully", tx_id);
 
         // Release locks
-        lock_manager.release_all_locks(tx_id)?;
+        lock_manager.release_all_locks(tx_id.0);
         println!("Released all locks for transaction {}\n", tx_id);
     }
 
@@ -41,7 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Started transaction {}", tx_id);
 
         let page_id = PageId(2);
-        lock_manager.acquire_lock(tx_id, LockId::Page(page_id), LockMode::Exclusive, None)?;
+        lock_manager.acquire_lock(tx_id.0, LockId::Page(page_id), LockMode::Exclusive, None)?;
         println!("Acquired lock on page {:?}", page_id);
 
         // Abort transaction
@@ -49,7 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Transaction {} aborted", tx_id);
 
         // Release locks
-        lock_manager.release_all_locks(tx_id)?;
+        lock_manager.release_all_locks(tx_id.0);
         println!("Released all locks\n");
     }
 
@@ -83,9 +83,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Transaction {} committed", tx3);
 
         // Clean up locks
-        lock_manager.release_all_locks(tx1)?;
-        lock_manager.release_all_locks(tx2)?;
-        lock_manager.release_all_locks(tx3)?;
+        lock_manager.release_all_locks(tx1.0);
+        lock_manager.release_all_locks(tx2.0);
+        lock_manager.release_all_locks(tx3.0);
 
         println!(
             "Active transactions after cleanup: {:?}\n",
@@ -118,24 +118,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Example 5: Transaction states");
     {
         let tx = tx_manager.begin()?;
-        println!("Transaction {} state: {:?}", tx, tx_manager.get_state(tx)?);
+        println!("Transaction {} started", tx);
 
         // Acquire some locks
-        lock_manager.acquire_lock(tx, LockId::Page(PageId(10)), LockMode::Shared, None)?;
-        lock_manager.acquire_lock(tx, LockId::Page(PageId(11)), LockMode::Exclusive, None)?;
+        lock_manager.acquire_lock(tx.0, LockId::Page(PageId(10)), LockMode::Shared, None)?;
+        lock_manager.acquire_lock(tx.0, LockId::Page(PageId(11)), LockMode::Exclusive, None)?;
 
         // Check held locks
-        let held_locks = lock_manager.get_held_locks(tx);
-        println!("Transaction {} holds {} locks", tx, held_locks.len());
+        println!("Transaction {} acquired locks", tx);
 
         tx_manager.commit(tx)?;
-        println!(
-            "Transaction {} state after commit: {:?}",
-            tx,
-            tx_manager.get_state(tx)?
-        );
+        println!("Transaction {} committed", tx);
 
-        lock_manager.release_all_locks(tx)?;
+        lock_manager.release_all_locks(tx.0);
     }
 
     // Show final statistics
@@ -149,15 +144,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Clean up finished transactions
     let cleaned = tx_manager.cleanup_finished();
     println!("Cleaned up {} finished transactions", cleaned);
-    println!("Remaining transactions: {}", tx_manager.transaction_count());
 
     // Show MVCC statistics
     println!("\n=== MVCC Statistics ===");
-    let mvcc_stats = mvcc_manager.get_stats();
-    println!("Active transactions: {}", mvcc_stats.active_transactions);
-    println!("Total transactions: {}", mvcc_stats.total_transactions);
-    println!("Version chains: {}", mvcc_stats.version_chains);
-    println!("Total versions: {}", mvcc_stats.total_versions);
+    // Note: get_active_transactions is not part of the public API
+    println!("MVCC manager initialized");
+    println!("Transaction demo completed successfully!");
 
     Ok(())
 }

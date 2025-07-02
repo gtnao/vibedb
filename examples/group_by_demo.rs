@@ -1,20 +1,38 @@
 //! GROUP BY demonstrations with various scenarios
-//! 
+//!
 //! This example shows how to use GROUP BY with aggregate functions
 //! to analyze data by different grouping criteria.
 
 use anyhow::Result;
+use std::path::Path;
 use vibedb::{
     access::{DataType, Value},
     database::Database,
     executor::{
-        AggregateFunction, AggregateSpec, GroupByClause, HashAggregateExecutor, 
-        ExecutionContext, Executor, SeqScanExecutor, InsertExecutor, 
-        SortExecutor, SortCriteria, SortOrder, NullOrder, FilterExecutor,
+        AggregateFunction, AggregateSpec, ExecutionContext, Executor, FilterExecutor,
+        GroupByClause, HashAggregateExecutor, InsertExecutor, NullOrder, SeqScanExecutor,
+        SortCriteria, SortExecutor, SortOrder,
     },
     expression::{BinaryOperator, Expression},
 };
-use std::path::Path;
+
+// Helper function to format Value for display
+fn format_value(value: &Value) -> String {
+    match value {
+        Value::Int32(i) => i.to_string(),
+        Value::String(s) => s.clone(),
+        Value::Boolean(b) => b.to_string(),
+        Value::Null => "NULL".to_string(),
+    }
+}
+
+// Helper function to format price
+fn format_price(value: &Value) -> String {
+    match value {
+        Value::Int32(cents) => format!("{:.2}", *cents as f64 / 100.0),
+        _ => "?".to_string(),
+    }
+}
 
 fn main() -> Result<()> {
     println!("=== GROUP BY Demonstrations ===\n");
@@ -63,24 +81,18 @@ fn main() -> Result<()> {
 
     println!("=== Inserting Sales Data ===");
     let context = ExecutionContext::new(database.catalog.clone(), database.buffer_pool.clone());
-    
+
     for (id, product, category, region, quantity, price) in &sales_data {
-        let values = vec![
-            vec![
-                Value::Int32(*id),
-                Value::String(product.to_string()),
-                Value::String(category.to_string()),
-                Value::String(region.to_string()),
-                Value::Int32(*quantity),
-                Value::Int32(*price),
-            ],
-        ];
-        
-        let mut insert_executor = InsertExecutor::new(
-            "sales".to_string(),
-            values,
-            context.clone(),
-        );
+        let values = vec![vec![
+            Value::Int32(*id),
+            Value::String(product.to_string()),
+            Value::String(category.to_string()),
+            Value::String(region.to_string()),
+            Value::Int32(*quantity),
+            Value::Int32(*price),
+        ]];
+
+        let mut insert_executor = InsertExecutor::new("sales".to_string(), values, context.clone());
         insert_executor.init()?;
         insert_executor.next()?;
     }
@@ -91,14 +103,11 @@ fn main() -> Result<()> {
     println!("=== Example 1: GROUP BY category ===");
     println!("Sales Summary by Category:");
     {
-        let scan = Box::new(SeqScanExecutor::new(
-            "sales".to_string(),
-            context.clone(),
-        ));
+        let scan = Box::new(SeqScanExecutor::new("sales".to_string(), context.clone()));
 
         // Group by category (column 2)
         let group_by = GroupByClause::new(vec![2]);
-        
+
         // Aggregate expressions: COUNT(*), SUM(quantity), SUM(quantity * price)
         // Note: We'll calculate revenue by summing quantity * price for each row
         // Since we can't do arithmetic in aggregates directly, we'll sum the total per row
@@ -122,22 +131,24 @@ fn main() -> Result<()> {
             ),
         ];
 
-        let mut agg_executor = HashAggregateExecutor::new(
-            scan,
-            group_by,
-            aggregates,
-        )?;
+        let mut agg_executor = HashAggregateExecutor::new(scan, group_by, aggregates)?;
 
         agg_executor.init()?;
-        println!("{:<15} {:<10} {:<15} {:<15}", "Category", "Count", "Total Quantity", "Total Price");
+        println!(
+            "{:<15} {:<10} {:<15} {:<15}",
+            "Category", "Count", "Total Quantity", "Total Price"
+        );
         println!("{:-<55}", "");
         while let Some(tuple) = agg_executor.next()? {
-            let values = tuple.get_values();
-            println!("{:<15} {:<10} {:<15} ${:<14}", 
-                values[0],  // category
-                values[1],  // count
-                values[2],  // total quantity
-                values[3]   // total price
+            let schema = agg_executor.output_schema();
+            let data_types: Vec<DataType> = schema.iter().map(|col| col.data_type).collect();
+            let values = vibedb::access::deserialize_values(&tuple.data, &data_types)?;
+            println!(
+                "{:<15} {:<10} {:<15} ${:<14}",
+                format_value(&values[0]), // category
+                format_value(&values[1]), // count
+                format_value(&values[2]), // total quantity
+                format_value(&values[3])  // total price
             );
         }
     }
@@ -147,14 +158,11 @@ fn main() -> Result<()> {
     println!("=== Example 2: GROUP BY region ===");
     println!("Regional Performance:");
     {
-        let scan = Box::new(SeqScanExecutor::new(
-            "sales".to_string(),
-            context.clone(),
-        ));
+        let scan = Box::new(SeqScanExecutor::new("sales".to_string(), context.clone()));
 
         // Group by region (column 3)
         let group_by = GroupByClause::new(vec![3]);
-        
+
         let aggregates = vec![
             AggregateSpec::with_alias(
                 AggregateFunction::Count,
@@ -173,35 +181,34 @@ fn main() -> Result<()> {
             ),
         ];
 
-        let agg_executor = HashAggregateExecutor::new(
-            scan,
-            group_by,
-            aggregates,
-        )?;
+        let agg_executor = HashAggregateExecutor::new(scan, group_by, aggregates)?;
 
         // Sort by total quantity descending (column 2 in output)
         let sort_criteria = vec![SortCriteria {
-            column_idx: 2,
+            column_index: 2,
             order: SortOrder::Desc,
-            null_order: NullOrder::NullsLast,
+            null_order: NullOrder::Last,
         }];
 
-        let mut sort_executor = SortExecutor::new(
-            Box::new(agg_executor),
-            sort_criteria,
-        );
+        let mut sort_executor = SortExecutor::new(Box::new(agg_executor), sort_criteria);
 
         sort_executor.init()?;
-        println!("{:<10} {:<10} {:<15} {:<15}", "Region", "Orders", "Total Quantity", "Avg Price");
+        println!(
+            "{:<10} {:<10} {:<15} {:<15}",
+            "Region", "Orders", "Total Quantity", "Avg Price"
+        );
         println!("{:-<50}", "");
-        
+
         while let Some(tuple) = sort_executor.next()? {
-            let values = tuple.get_values();
-            println!("{:<10} {:<10} {:<15} ${:<14}", 
-                values[0],  // region
-                values[1],  // order count
-                values[2],  // total quantity
-                values[3]   // avg price
+            let schema = sort_executor.output_schema();
+            let data_types: Vec<DataType> = schema.iter().map(|col| col.data_type).collect();
+            let values = vibedb::access::deserialize_values(&tuple.data, &data_types)?;
+            println!(
+                "{:<10} {:<10} {:<15} ${:<14}",
+                format_value(&values[0]), // region
+                format_value(&values[1]), // order count
+                format_value(&values[2]), // total quantity
+                format_value(&values[3])  // avg price
             );
         }
     }
@@ -211,14 +218,11 @@ fn main() -> Result<()> {
     println!("=== Example 3: GROUP BY product, region ===");
     println!("Product Sales by Region:");
     {
-        let scan = Box::new(SeqScanExecutor::new(
-            "sales".to_string(),
-            context.clone(),
-        ));
+        let scan = Box::new(SeqScanExecutor::new("sales".to_string(), context.clone()));
 
         // Group by product (column 1) and region (column 3)
         let group_by = GroupByClause::new(vec![1, 3]);
-        
+
         let aggregates = vec![
             AggregateSpec::with_alias(
                 AggregateFunction::Sum,
@@ -232,22 +236,24 @@ fn main() -> Result<()> {
             ),
         ];
 
-        let mut agg_executor = HashAggregateExecutor::new(
-            scan,
-            group_by,
-            aggregates,
-        )?;
+        let mut agg_executor = HashAggregateExecutor::new(scan, group_by, aggregates)?;
 
         agg_executor.init()?;
-        println!("{:<15} {:<10} {:<15} {:<15}", "Product", "Region", "Units Sold", "Max Price");
+        println!(
+            "{:<15} {:<10} {:<15} {:<15}",
+            "Product", "Region", "Units Sold", "Max Price"
+        );
         println!("{:-<55}", "");
         while let Some(tuple) = agg_executor.next()? {
-            let values = tuple.get_values();
-            println!("{:<15} {:<10} {:<15} ${:<14}", 
-                values[0],  // product
-                values[1],  // region
-                values[2],  // units sold
-                values[3]   // max price
+            let schema = agg_executor.output_schema();
+            let data_types: Vec<DataType> = schema.iter().map(|col| col.data_type).collect();
+            let values = vibedb::access::deserialize_values(&tuple.data, &data_types)?;
+            println!(
+                "{:<15} {:<10} {:<15} ${:<14}",
+                format_value(&values[0]), // product
+                format_value(&values[1]), // region
+                format_value(&values[2]), // units sold
+                format_value(&values[3])  // max price
             );
         }
     }
@@ -257,48 +263,39 @@ fn main() -> Result<()> {
     println!("=== Example 4: GROUP BY with post-aggregation filtering ===");
     println!("Categories with more than 5 items sold:");
     {
-        let scan = Box::new(SeqScanExecutor::new(
-            "sales".to_string(),
-            context.clone(),
-        ));
+        let scan = Box::new(SeqScanExecutor::new("sales".to_string(), context.clone()));
 
         // Group by category
         let group_by = GroupByClause::new(vec![2]);
-        
-        let aggregates = vec![
-            AggregateSpec::with_alias(
-                AggregateFunction::Sum,
-                Some(4), // quantity
-                "total_quantity".to_string(),
-            ),
-        ];
 
-        let agg_executor = HashAggregateExecutor::new(
-            scan,
-            group_by,
-            aggregates,
-        )?;
+        let aggregates = vec![AggregateSpec::with_alias(
+            AggregateFunction::Sum,
+            Some(4), // quantity
+            "total_quantity".to_string(),
+        )];
+
+        let agg_executor = HashAggregateExecutor::new(scan, group_by, aggregates)?;
 
         // Filter for total quantity > 5
-        let filter_expr = Expression::binary(
-            BinaryOperator::GreaterThan,
+        let filter_expr = Expression::binary_op(
+            BinaryOperator::Gt,
             Expression::column(1), // total_quantity is at index 1
             Expression::literal(Value::Int32(5)),
         );
 
-        let mut filter_executor = FilterExecutor::new(
-            Box::new(agg_executor),
-            filter_expr,
-        );
+        let mut filter_executor = FilterExecutor::new(Box::new(agg_executor), filter_expr);
 
         filter_executor.init()?;
         println!("{:<15} {:<15}", "Category", "Total Quantity");
         println!("{:-<30}", "");
         while let Some(tuple) = filter_executor.next()? {
-            let values = tuple.get_values();
-            println!("{:<15} {:<14}", 
-                values[0],  // category
-                values[1]   // total quantity
+            let schema = filter_executor.output_schema();
+            let data_types: Vec<DataType> = schema.iter().map(|col| col.data_type).collect();
+            let values = vibedb::access::deserialize_values(&tuple.data, &data_types)?;
+            println!(
+                "{:<15} {:<14}",
+                format_value(&values[0]), // category
+                format_value(&values[1])  // total quantity
             );
         }
     }
@@ -308,14 +305,11 @@ fn main() -> Result<()> {
     println!("=== Example 5: Complex aggregation ===");
     println!("Product Performance Metrics:");
     {
-        let scan = Box::new(SeqScanExecutor::new(
-            "sales".to_string(),
-            context.clone(),
-        ));
+        let scan = Box::new(SeqScanExecutor::new("sales".to_string(), context.clone()));
 
         // Group by product
         let group_by = GroupByClause::new(vec![1]);
-        
+
         let aggregates = vec![
             AggregateSpec::with_alias(
                 AggregateFunction::Count,
@@ -339,35 +333,34 @@ fn main() -> Result<()> {
             ),
         ];
 
-        let agg_executor = HashAggregateExecutor::new(
-            scan,
-            group_by,
-            aggregates,
-        )?;
+        let agg_executor = HashAggregateExecutor::new(scan, group_by, aggregates)?;
 
         // Sort by units sold descending
         let sort_criteria = vec![SortCriteria {
-            column_idx: 2, // units_sold column
+            column_index: 2, // units_sold column
             order: SortOrder::Desc,
-            null_order: NullOrder::NullsLast,
+            null_order: NullOrder::Last,
         }];
 
-        let mut sort_executor = SortExecutor::new(
-            Box::new(agg_executor),
-            sort_criteria,
-        );
+        let mut sort_executor = SortExecutor::new(Box::new(agg_executor), sort_criteria);
 
         sort_executor.init()?;
-        println!("{:<15} {:<10} {:<12} {:<12} {:<12}", "Product", "Orders", "Units Sold", "Min Price", "Max Price");
+        println!(
+            "{:<15} {:<10} {:<12} {:<12} {:<12}",
+            "Product", "Orders", "Units Sold", "Min Price", "Max Price"
+        );
         println!("{:-<61}", "");
         while let Some(tuple) = sort_executor.next()? {
-            let values = tuple.get_values();
-            println!("{:<15} {:<10} {:<12} ${:<11} ${:<11}", 
-                values[0],  // product
-                values[1],  // order count
-                values[2],  // units sold
-                values[3],  // min price
-                values[4]   // max price
+            let schema = sort_executor.output_schema();
+            let data_types: Vec<DataType> = schema.iter().map(|col| col.data_type).collect();
+            let values = vibedb::access::deserialize_values(&tuple.data, &data_types)?;
+            println!(
+                "{:<15} {:<10} {:<12} ${:<11} ${:<11}",
+                format_value(&values[0]), // product
+                format_value(&values[1]), // order count
+                format_value(&values[2]), // units sold
+                format_value(&values[3]), // min price
+                format_value(&values[4])  // max price
             );
         }
     }
