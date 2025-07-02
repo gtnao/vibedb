@@ -348,6 +348,14 @@ impl DerefMut for PageWriteGuard {
 
 impl Drop for PageWriteGuard {
     fn drop(&mut self) {
+        // Mark the page as dirty since it was writable
+        {
+            let frames = self.inner.frames.read();
+            if let Some(frame) = frames.get(&self.frame_id) {
+                frame.is_dirty.store(true, Ordering::SeqCst);
+            }
+        }
+        
         // Decrement pin count
         let should_unpin = {
             let frames = self.inner.frames.read();
@@ -362,6 +370,15 @@ impl Drop for PageWriteGuard {
         // Call unpin on the replacer if needed
         if should_unpin {
             self.inner.replacer.lock().unpin(self.frame_id);
+        }
+    }
+}
+
+impl Drop for BufferPoolManager {
+    fn drop(&mut self) {
+        // Flush all dirty pages before shutting down
+        if let Err(e) = self.flush_all() {
+            eprintln!("Error flushing pages during BufferPoolManager shutdown: {}", e);
         }
     }
 }

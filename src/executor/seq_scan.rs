@@ -30,16 +30,19 @@ impl SeqScanExecutor {
 
 impl Executor for SeqScanExecutor {
     fn init(&mut self) -> Result<()> {
+        eprintln!("DEBUG: SeqScanExecutor::init for table: {}", self.table_name);
         if self.initialized {
             return Ok(());
         }
 
         // Get table info from catalog
+        eprintln!("DEBUG: Getting table info from catalog");
         let table_info = self
             .context
             .catalog
             .get_table(&self.table_name)?
             .ok_or_else(|| anyhow::anyhow!("Table '{}' not found", self.table_name))?;
+        eprintln!("DEBUG: Got table info, table_id: {:?}", table_info.table_id);
 
         // Get schema and output schema
         let (schema, custom_deserializer) = if let Some(ref predefined_schema) = table_info.schema {
@@ -62,10 +65,12 @@ impl Executor for SeqScanExecutor {
             (predefined_schema.clone(), table_info.custom_deserializer)
         } else {
             // User table - get schema from pg_attribute
+            eprintln!("DEBUG: Getting table columns from pg_attribute");
             let columns = self
                 .context
                 .catalog
                 .get_table_columns(table_info.table_id)?;
+            eprintln!("DEBUG: Got {} columns", columns.len());
 
             // Build output schema
             self.output_schema = columns

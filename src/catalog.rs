@@ -206,8 +206,14 @@ impl Catalog {
 
         // Scan catalog table to load all table info
         let mut current_page_id = Some(CATALOG_FIRST_PAGE);
+        let mut visited_pages = std::collections::HashSet::new();
 
         while let Some(page_id) = current_page_id {
+            // Prevent infinite loops
+            if !visited_pages.insert(page_id) {
+                break;
+            }
+            
             match buffer_pool.fetch_page(page_id) {
                 Ok(guard) => {
                     // Create a temporary HeapPage view
@@ -446,8 +452,14 @@ impl Catalog {
             .ok_or_else(|| anyhow::anyhow!("pg_attribute table not found"))?;
 
         let mut current_page_id = Some(attr_table_info.first_page_id);
+        let mut visited_pages = std::collections::HashSet::new();
 
         while let Some(page_id) = current_page_id {
+            // Prevent infinite loops
+            if !visited_pages.insert(page_id) {
+                break;
+            }
+            
             match self.buffer_pool.fetch_page(page_id) {
                 Ok(guard) => {
                     let heap_page = crate::storage::page::utils::heap_page_from_guard(&guard);
@@ -615,8 +627,14 @@ impl Catalog {
             .ok_or_else(|| anyhow::anyhow!("pg_index table not found"))?;
 
         let mut current_page_id = Some(index_table_info.first_page_id);
+        let mut visited_pages = std::collections::HashSet::new();
 
         while let Some(page_id) = current_page_id {
+            // Prevent infinite loops
+            if !visited_pages.insert(page_id) {
+                break;
+            }
+            
             match self.buffer_pool.fetch_page(page_id) {
                 Ok(guard) => {
                     let heap_page = crate::storage::page::utils::heap_page_from_guard(&guard);

@@ -37,22 +37,27 @@ impl InsertExecutor {
 
 impl Executor for InsertExecutor {
     fn init(&mut self) -> Result<()> {
+        eprintln!("DEBUG: InsertExecutor::init for table: {}", self.table_name);
         if self.initialized {
             return Ok(());
         }
 
         // Get table info from catalog
+        eprintln!("DEBUG: Getting table info from catalog");
         let table_info = self
             .context
             .catalog
             .get_table(&self.table_name)?
             .ok_or_else(|| anyhow::anyhow!("Table '{}' not found", self.table_name))?;
+        eprintln!("DEBUG: Got table info, table_id: {:?}", table_info.table_id);
 
         // Get table schema
+        eprintln!("DEBUG: Getting table columns from catalog");
         let columns = self
             .context
             .catalog
             .get_table_columns(table_info.table_id)?;
+        eprintln!("DEBUG: Got {} columns", columns.len());
 
         // Extract schema
         self.schema = columns.iter().map(|col| col.column_type).collect();

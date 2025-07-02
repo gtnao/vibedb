@@ -97,6 +97,11 @@ impl TableHeap {
         }
     }
 
+    /// Get the first page ID of the table
+    pub fn first_page_id(&self) -> Option<PageId> {
+        self.first_page_id
+    }
+
     /// Update a tuple
     pub fn update(&mut self, tuple_id: TupleId, data: &[u8]) -> Result<TupleId> {
         // For simplicity, we'll do delete + insert for now

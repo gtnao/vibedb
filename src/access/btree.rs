@@ -584,7 +584,7 @@ impl BTree {
                     }
 
                     // Decide which page to insert the key into
-                    if key <= &split_key {
+                    if key <= split_key.as_slice() {
                         leaf_page
                             .insert_key_value(key, tuple_id)
                             .map_err(|e| anyhow::anyhow!(e))?;
