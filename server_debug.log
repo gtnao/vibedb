@@ -1,0 +1,112 @@
+warning: fields `database` and `transaction_manager` are never read
+  --> src/network/protocol.rs:39:5
+   |
+38 | pub struct ProtocolHandler {
+   |            --------------- fields in this struct
+39 |     database: Arc<Database>,
+   |     ^^^^^^^^
+40 |     transaction_manager: Arc<TransactionManager>,
+   |     ^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` on by default
+
+warning: method `logical_to_expression` is never used
+   --> src/session.rs:224:8
+    |
+28  | impl Session {
+    | ------------ method in this implementation
+...
+224 |     fn logical_to_expression(
+    |        ^^^^^^^^^^^^^^^^^^^^^
+
+warning: `vibedb` (lib) generated 2 warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running `target/debug/vibedb --port 5437 --data-dir /tmp/vibedb_test5`
+
+    __     ___ _          ____  ____  
+    \ \   / (_) |__   ___|  _ \| __ ) 
+     \ \ / /| | '_ \ / _ \ | | |  _ \ 
+      \ V / | | |_) |  __/ |_| | |_) |
+       \_/  |_|_.__/ \___|____/|____/ 
+    
+    VibeDB Server v0.1.0
+    PostgreSQL-compatible database server
+    
+📁 Data directory: /tmp/vibedb_test5
+🆕 Creating new database at: /tmp/vibedb_test5/vibedb.db
+📊 Creating default schema...
+✅ Default schema created successfully
+   - Table 'users' (id, name, email, active)
+   - Table 'products' (id, name, price, in_stock)
+🔀 Created transaction manager
+🔧 Created server instance
+📍 Parsed address: Some(127.0.0.1:5437)
+🚀 Server configuration:
+   - Host: 127.0.0.1
+   - Port: 5437
+   - Max connections: 100
+
+📡 Ready to accept connections
+
+Connect with: psql -h 127.0.0.1 -p 5437 -U vibedb -d vibedb
+(Any username/password will be accepted)
+
+VibeDB server listening on 127.0.0.1:5437
+Ready to accept connections
+New connection from 127.0.0.1:33260
+DEBUG: Sending message type: Discriminant(11)
+DEBUG: Encoded message size: 9 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(21)
+DEBUG: Encoded message size: 25 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(21)
+DEBUG: Encoded message size: 26 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(21)
+DEBUG: Encoded message size: 26 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(21)
+DEBUG: Encoded message size: 24 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(21)
+DEBUG: Encoded message size: 26 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(21)
+DEBUG: Encoded message size: 28 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(21)
+DEBUG: Encoded message size: 22 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(21)
+DEBUG: Encoded message size: 34 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(21)
+DEBUG: Encoded message size: 36 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(21)
+DEBUG: Encoded message size: 18 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(12)
+DEBUG: Encoded message size: 13 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(24)
+DEBUG: Encoded message size: 6 bytes
+DEBUG: Message sent successfully
+DEBUG: Handling message in protocol handler
+DEBUG: Executing SQL: SELECT id FROM users;
+DEBUG: Parsed statement successfully
+DEBUG: Created physical plan
+DEBUG: Executing SELECT plan
+DEBUG: Child schema has 0 columns
+DEBUG: Processing projection expression: Column("id")
+ERROR: Column 'id' not found in schema
+DEBUG: Got 2 response messages
+DEBUG: Sending message type: Discriminant(18)
+DEBUG: Encoded message size: 67 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(24)
+DEBUG: Encoded message size: 6 bytes
+DEBUG: Message sent successfully
+DEBUG: All responses sent
+Connection closed from 127.0.0.1:33260

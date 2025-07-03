@@ -81,7 +81,7 @@ impl Connection {
                     self.read_buffer[2],
                     self.read_buffer[3],
                 ]) as usize;
-                
+
                 if len == 8 && self.read_buffer.len() >= 8 {
                     let code = i32::from_be_bytes([
                         self.read_buffer[4],
@@ -89,15 +89,15 @@ impl Connection {
                         self.read_buffer[6],
                         self.read_buffer[7],
                     ]);
-                    
+
                     if code == crate::network::SSL_REQUEST_CODE {
                         // Consume the SSL request
                         self.read_buffer.advance(8);
-                        
+
                         // Send 'N' to indicate no SSL support
                         self.stream.write_all(b"N").await?;
                         self.stream.flush().await?;
-                        
+
                         // Continue to read the actual startup message
                         continue;
                     }
@@ -167,18 +167,29 @@ impl Connection {
             b'C' => MessageType::Close,
             b'D' => MessageType::Describe,
             b'H' => MessageType::Flush,
-            _ => return Err(NetworkError::InvalidMessage(format!("Unknown message type: {}", msg_type_byte as char))),
+            _ => {
+                return Err(NetworkError::InvalidMessage(format!(
+                    "Unknown message type: {}",
+                    msg_type_byte as char
+                )))
+            }
         };
-        
+
         let message = Message::decode(msg_type, &mut msg_buf)?;
         Ok(Some(message))
     }
 
     async fn send_message(&mut self, message: Message) -> Result<()> {
-        eprintln!("DEBUG: Sending message type: {:?}", std::mem::discriminant(&message));
+        eprintln!(
+            "DEBUG: Sending message type: {:?}",
+            std::mem::discriminant(&message)
+        );
         self.write_buffer.clear();
         message.encode(&mut self.write_buffer)?;
-        eprintln!("DEBUG: Encoded message size: {} bytes", self.write_buffer.len());
+        eprintln!(
+            "DEBUG: Encoded message size: {} bytes",
+            self.write_buffer.len()
+        );
         self.stream.write_all(&self.write_buffer).await?;
         self.stream.flush().await?;
         eprintln!("DEBUG: Message sent successfully");

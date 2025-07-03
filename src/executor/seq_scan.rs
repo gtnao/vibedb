@@ -30,7 +30,10 @@ impl SeqScanExecutor {
 
 impl Executor for SeqScanExecutor {
     fn init(&mut self) -> Result<()> {
-        eprintln!("DEBUG: SeqScanExecutor::init for table: {}", self.table_name);
+        eprintln!(
+            "DEBUG: SeqScanExecutor::init for table: {}",
+            self.table_name
+        );
         if self.initialized {
             return Ok(());
         }

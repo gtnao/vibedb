@@ -20,6 +20,19 @@ pub enum PhysicalPlan {
         values: Vec<Vec<LogicalExpression>>,
     },
 
+    /// UPDATE execution
+    Update {
+        table: String,
+        assignments: Vec<(String, LogicalExpression)>,
+        filter: Option<Box<PhysicalPlanNode>>,
+    },
+
+    /// DELETE execution
+    Delete {
+        table: String,
+        filter: Option<Box<PhysicalPlanNode>>,
+    },
+
     /// CREATE TABLE execution
     CreateTable {
         table_name: String,
@@ -130,6 +143,24 @@ impl PhysicalPlan {
                 ..
             } => {
                 format!("CREATE TABLE {} ({} columns)", table_name, columns.len())
+            }
+            PhysicalPlan::Update {
+                table,
+                assignments,
+                filter,
+            } => {
+                let mut result = format!("UPDATE {} SET {} assignments", table, assignments.len());
+                if filter.is_some() {
+                    result.push_str(" WHERE ...");
+                }
+                result
+            }
+            PhysicalPlan::Delete { table, filter } => {
+                let mut result = format!("DELETE FROM {}", table);
+                if filter.is_some() {
+                    result.push_str(" WHERE ...");
+                }
+                result
             }
         }
     }

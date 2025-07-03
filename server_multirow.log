@@ -1,0 +1,213 @@
+warning: fields `database` and `transaction_manager` are never read
+  --> src/network/protocol.rs:39:5
+   |
+38 | pub struct ProtocolHandler {
+   |            --------------- fields in this struct
+39 |     database: Arc<Database>,
+   |     ^^^^^^^^
+40 |     transaction_manager: Arc<TransactionManager>,
+   |     ^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` on by default
+
+warning: method `logical_to_expression` is never used
+   --> src/session.rs:248:8
+    |
+28  | impl Session {
+    | ------------ method in this implementation
+...
+248 |     fn logical_to_expression(
+    |        ^^^^^^^^^^^^^^^^^^^^^
+
+warning: `vibedb` (lib) generated 2 warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running `target/debug/vibedb --port 5441 --data-dir /tmp/vibedb_test9`
+
+    __     ___ _          ____  ____  
+    \ \   / (_) |__   ___|  _ \| __ ) 
+     \ \ / /| | '_ \ / _ \ | | |  _ \ 
+      \ V / | | |_) |  __/ |_| | |_) |
+       \_/  |_|_.__/ \___|____/|____/ 
+    
+    VibeDB Server v0.1.0
+    PostgreSQL-compatible database server
+    
+📁 Data directory: /tmp/vibedb_test9
+🆕 Creating new database at: /tmp/vibedb_test9/vibedb.db
+📊 Creating default schema...
+✅ Default schema created successfully
+   - Table 'users' (id, name, email, active)
+   - Table 'products' (id, name, price, in_stock)
+🔀 Created transaction manager
+🔧 Created server instance
+📍 Parsed address: Some(127.0.0.1:5441)
+🚀 Server configuration:
+   - Host: 127.0.0.1
+   - Port: 5441
+   - Max connections: 100
+
+📡 Ready to accept connections
+
+Connect with: psql -h 127.0.0.1 -p 5441 -U vibedb -d vibedb
+(Any username/password will be accepted)
+
+VibeDB server listening on 127.0.0.1:5441
+Ready to accept connections
+New connection from 127.0.0.1:45736
+DEBUG: Sending message type: Discriminant(11)
+DEBUG: Encoded message size: 9 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(21)
+DEBUG: Encoded message size: 25 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(21)
+DEBUG: Encoded message size: 26 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(21)
+DEBUG: Encoded message size: 26 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(21)
+DEBUG: Encoded message size: 24 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(21)
+DEBUG: Encoded message size: 26 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(21)
+DEBUG: Encoded message size: 28 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(21)
+DEBUG: Encoded message size: 22 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(21)
+DEBUG: Encoded message size: 34 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(21)
+DEBUG: Encoded message size: 36 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(21)
+DEBUG: Encoded message size: 18 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(12)
+DEBUG: Encoded message size: 13 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(24)
+DEBUG: Encoded message size: 6 bytes
+DEBUG: Message sent successfully
+DEBUG: Handling message in protocol handler
+DEBUG: Executing SQL: INSERT INTO users (id, name, email, active) VALUES (1, 'Alice', 'alice@example.com', true), (2, 'Bob', 'bob@example.com', false), (3, 'Charlie', 'charlie@example.com', true);
+DEBUG: Parsed statement successfully
+DEBUG: Created physical plan
+DEBUG: InsertExecutor::init for table: users
+DEBUG: Getting table info from catalog
+DEBUG: Got table info, table_id: TableId(4)
+DEBUG: Getting table columns from catalog
+DEBUG: get_table_columns called for table_id: TableId(4)
+DEBUG: Columns not in cache, searching pg_attribute
+DEBUG: pg_attribute heap exists
+DEBUG: Got 4 columns
+DEBUG: Got 2 response messages
+DEBUG: Sending message type: Discriminant(15)
+DEBUG: Encoded message size: 16 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(24)
+DEBUG: Encoded message size: 6 bytes
+DEBUG: Message sent successfully
+DEBUG: All responses sent
+Connection closed from 127.0.0.1:45736
+New connection from 127.0.0.1:50664
+DEBUG: Sending message type: Discriminant(11)
+DEBUG: Encoded message size: 9 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(21)
+DEBUG: Encoded message size: 25 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(21)
+DEBUG: Encoded message size: 26 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(21)
+DEBUG: Encoded message size: 26 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(21)
+DEBUG: Encoded message size: 24 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(21)
+DEBUG: Encoded message size: 26 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(21)
+DEBUG: Encoded message size: 28 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(21)
+DEBUG: Encoded message size: 22 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(21)
+DEBUG: Encoded message size: 34 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(21)
+DEBUG: Encoded message size: 36 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(21)
+DEBUG: Encoded message size: 18 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(12)
+DEBUG: Encoded message size: 13 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(24)
+DEBUG: Encoded message size: 6 bytes
+DEBUG: Message sent successfully
+DEBUG: Handling message in protocol handler
+DEBUG: Executing SQL: SELECT * FROM users ORDER BY id;
+DEBUG: Parsed statement successfully
+DEBUG: Created physical plan
+DEBUG: Executing SELECT plan
+DEBUG: Initializing child executor for projection
+DEBUG: SeqScanExecutor::init for table: users
+DEBUG: Getting table info from catalog
+DEBUG: Got table info, table_id: TableId(4)
+DEBUG: Child schema has 4 columns
+DEBUG: Column[0]: name='id', type=Int32
+DEBUG: Column[1]: name='name', type=Varchar
+DEBUG: Column[2]: name='email', type=Varchar
+DEBUG: Column[3]: name='active', type=Boolean
+DEBUG: Processing projection expression: Column("id")
+DEBUG: Resolved column 'id' to index 0
+DEBUG: Processing projection expression: Column("name")
+DEBUG: Resolved column 'name' to index 1
+DEBUG: Processing projection expression: Column("email")
+DEBUG: Resolved column 'email' to index 2
+DEBUG: Processing projection expression: Column("active")
+DEBUG: Resolved column 'active' to index 3
+DEBUG: Created executor
+DEBUG: SeqScanExecutor::init for table: users
+DEBUG: Initialized executor
+DEBUG: Got schema with 4 columns
+DEBUG: Collected 3 rows
+DEBUG: Handling SELECT result with 3 rows
+DEBUG: Sending RowDescription with 4 fields
+DEBUG: Processing row 1/3
+DEBUG: Sending DataRow with 4 values
+DEBUG: Processing row 2/3
+DEBUG: Sending DataRow with 4 values
+DEBUG: Processing row 3/3
+DEBUG: Sending DataRow with 4 values
+DEBUG: Sending CommandComplete for 3 rows
+DEBUG: Got 6 response messages
+DEBUG: Sending message type: Discriminant(25)
+DEBUG: Encoded message size: 100 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(16)
+DEBUG: Encoded message size: 47 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(16)
+DEBUG: Encoded message size: 43 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(16)
+DEBUG: Encoded message size: 51 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(15)
+DEBUG: Encoded message size: 14 bytes
+DEBUG: Message sent successfully
+DEBUG: Sending message type: Discriminant(24)
+DEBUG: Encoded message size: 6 bytes
+DEBUG: Message sent successfully
+DEBUG: All responses sent
+Connection closed from 127.0.0.1:50664

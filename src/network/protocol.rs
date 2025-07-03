@@ -1,9 +1,9 @@
 // PostgreSQL wire protocol handler
 
 use crate::{
-    access::{DataType, Value, deserialize_values},
+    access::{deserialize_values, DataType, Value},
     database::Database,
-    session::{Session, QueryResult},
+    session::{QueryResult, Session},
     transaction::{id::TransactionId, manager::TransactionManager},
 };
 use std::collections::HashMap;
@@ -155,7 +155,12 @@ impl ProtocolHandler {
                 parameter_formats: _,
                 parameter_values,
                 result_formats,
-            } => self.handle_bind(portal_name, statement_name, parameter_values, result_formats),
+            } => self.handle_bind(
+                portal_name,
+                statement_name,
+                parameter_values,
+                result_formats,
+            ),
             Message::Execute {
                 portal_name,
                 max_rows: _,
@@ -209,14 +214,16 @@ impl ProtocolHandler {
                     for (i, row) in rows.iter().enumerate() {
                         eprintln!("DEBUG: Processing row {}/{}", i + 1, row_count);
                         // Get column types from schema
-                        let data_types: Vec<DataType> = schema.iter().map(|col| col.data_type).collect();
-                        
+                        let data_types: Vec<DataType> =
+                            schema.iter().map(|col| col.data_type).collect();
+
                         // Deserialize row data
                         let values = deserialize_values(&row.data, &data_types)
                             .map_err(|e| ProtocolError::ExecutionError(e.to_string()))?;
-                        
+
                         // Convert to text format
-                        let row_values: Vec<Option<Vec<u8>>> = values.iter()
+                        let row_values: Vec<Option<Vec<u8>>> = values
+                            .iter()
                             .map(|v| value_to_text(v).map(|s| s.into_bytes()))
                             .collect();
                         eprintln!("DEBUG: Sending DataRow with {} values", row_values.len());
@@ -231,6 +238,16 @@ impl ProtocolHandler {
                 QueryResult::Insert { row_count, .. } => {
                     responses.push(Message::CommandComplete {
                         tag: format!("INSERT 0 {}", row_count),
+                    });
+                }
+                QueryResult::Update { row_count, .. } => {
+                    responses.push(Message::CommandComplete {
+                        tag: format!("UPDATE {}", row_count),
+                    });
+                }
+                QueryResult::Delete { row_count, .. } => {
+                    responses.push(Message::CommandComplete {
+                        tag: format!("DELETE {}", row_count),
                     });
                 }
                 QueryResult::CreateTable { table_name } => {

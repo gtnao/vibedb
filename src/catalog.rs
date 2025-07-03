@@ -213,7 +213,7 @@ impl Catalog {
             if !visited_pages.insert(page_id) {
                 break;
             }
-            
+
             match buffer_pool.fetch_page(page_id) {
                 Ok(guard) => {
                     // Create a temporary HeapPage view
@@ -320,8 +320,22 @@ impl Catalog {
                     for slot_id in 0..tuple_count {
                         match heap_page.get_tuple(slot_id) {
                             Ok(data) => {
-                                if let Ok(table_info) = TableInfo::deserialize(data) {
+                                if let Ok(mut table_info) = TableInfo::deserialize(data) {
                                     if table_info.table_name == name {
+                                        // Get column information from pg_attribute
+                                        let columns =
+                                            self.get_table_columns(table_info.table_id)?;
+                                        if !columns.is_empty() {
+                                            let mut column_names = Vec::new();
+                                            let mut schema = Vec::new();
+                                            for column in columns {
+                                                column_names.push(column.column_name.clone());
+                                                schema.push(column.column_type);
+                                            }
+                                            table_info.column_names = Some(column_names);
+                                            table_info.schema = Some(schema);
+                                        }
+
                                         // Update cache
                                         let mut cache = self.table_cache.write().unwrap();
                                         cache.insert(name.to_string(), table_info.clone());
@@ -430,18 +444,32 @@ impl Catalog {
 
     /// Get columns for a table
     pub fn get_table_columns(&self, table_id: TableId) -> Result<Vec<ColumnInfo>> {
+        eprintln!(
+            "DEBUG: get_table_columns called for table_id: {:?}",
+            table_id
+        );
+
         // Check cache first
         {
             let cache = self.column_cache.read().unwrap();
             if let Some(columns) = cache.get(&table_id) {
+                eprintln!("DEBUG: Found {} columns in cache", columns.len());
                 return Ok(columns.clone());
             }
         }
 
+        eprintln!("DEBUG: Columns not in cache, searching pg_attribute");
+
         // If no pg_attribute table, return empty
         let _attr_heap = match &self.attribute_heap {
-            Some(heap) => heap,
-            None => return Ok(vec![]),
+            Some(heap) => {
+                eprintln!("DEBUG: pg_attribute heap exists");
+                heap
+            }
+            None => {
+                eprintln!("DEBUG: No pg_attribute heap, returning empty");
+                return Ok(vec![]);
+            }
         };
 
         let mut columns = Vec::new();
@@ -459,7 +487,7 @@ impl Catalog {
             if !visited_pages.insert(page_id) {
                 break;
             }
-            
+
             match self.buffer_pool.fetch_page(page_id) {
                 Ok(guard) => {
                     let heap_page = crate::storage::page::utils::heap_page_from_guard(&guard);
@@ -634,7 +662,7 @@ impl Catalog {
             if !visited_pages.insert(page_id) {
                 break;
             }
-            
+
             match self.buffer_pool.fetch_page(page_id) {
                 Ok(guard) => {
                     let heap_page = crate::storage::page::utils::heap_page_from_guard(&guard);

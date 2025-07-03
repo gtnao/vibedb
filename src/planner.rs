@@ -10,7 +10,10 @@ pub mod logical;
 pub mod physical;
 
 use crate::catalog::Catalog;
-use crate::sql::ast::{CreateTableStatement, InsertStatement, SelectStatement, Statement};
+use crate::sql::ast::{
+    CreateTableStatement, DeleteStatement, InsertStatement, SelectStatement, Statement,
+    UpdateStatement,
+};
 use anyhow::{anyhow, Result};
 use std::sync::Arc;
 
@@ -35,8 +38,8 @@ impl Planner {
             Statement::Select(select) => self.select_to_logical(select),
             Statement::Insert(insert) => self.insert_to_logical(insert),
             Statement::CreateTable(create) => self.create_table_to_logical(create),
-            Statement::Update(_) => Err(anyhow!("UPDATE not yet implemented in planner")),
-            Statement::Delete(_) => Err(anyhow!("DELETE not yet implemented in planner")),
+            Statement::Update(update) => self.update_to_logical(update),
+            Statement::Delete(delete) => self.delete_to_logical(delete),
             Statement::DropTable(_) => Err(anyhow!("DROP TABLE not yet implemented in planner")),
             Statement::CreateIndex(_) => {
                 Err(anyhow!("CREATE INDEX not yet implemented in planner"))
@@ -61,6 +64,23 @@ impl Planner {
                 columns,
                 values,
             }),
+            LogicalPlan::Update {
+                table,
+                assignments,
+                filter,
+            } => Ok(PhysicalPlan::Update {
+                table,
+                assignments,
+                filter: filter
+                    .map(|f| self.logical_node_to_physical(f))
+                    .transpose()?,
+            }),
+            LogicalPlan::Delete { table, filter } => Ok(PhysicalPlan::Delete {
+                table,
+                filter: filter
+                    .map(|f| self.logical_node_to_physical(f))
+                    .transpose()?,
+            }),
             LogicalPlan::CreateTable {
                 table_name,
                 columns,
@@ -82,15 +102,19 @@ impl Planner {
     // Private helper methods
 
     fn select_to_logical(&self, select: SelectStatement) -> Result<LogicalPlan> {
-        // Start with the FROM clause
-        let mut plan = if let Some(table_ref) = select.from {
-            LogicalPlanNode::TableScan {
-                table_name: table_ref.name.clone(),
-                alias: table_ref.alias,
-            }
+        // Start with the FROM clause and track table name for * expansion
+        let (mut plan, table_name) = if let Some(table_ref) = select.from {
+            let table_name = table_ref.name.clone();
+            (
+                LogicalPlanNode::TableScan {
+                    table_name: table_ref.name.clone(),
+                    alias: table_ref.alias,
+                },
+                Some(table_name),
+            )
         } else {
             // SELECT without FROM (e.g., SELECT 1)
-            LogicalPlanNode::Values { rows: vec![vec![]] }
+            (LogicalPlanNode::Values { rows: vec![vec![]] }, None)
         };
 
         // Add JOINs
@@ -138,7 +162,7 @@ impl Planner {
         }
 
         // Add projection
-        let projections = self.convert_select_items(select.projections)?;
+        let projections = self.convert_select_items(select.projections, table_name.as_deref())?;
         plan = LogicalPlanNode::Projection {
             input: Box::new(plan),
             expressions: projections,
@@ -209,6 +233,67 @@ impl Planner {
             table_name: create.table_name,
             columns: create.columns,
             constraints: create.constraints,
+        })
+    }
+
+    fn delete_to_logical(&self, delete: DeleteStatement) -> Result<LogicalPlan> {
+        // TODO: Validate table exists once catalog supports mutable operations
+        // self.catalog.get_table(&delete.table_name)?;
+
+        // Create filter node if WHERE clause exists
+        let filter = if let Some(where_clause) = delete.where_clause {
+            let table_scan = LogicalPlanNode::TableScan {
+                table_name: delete.table_name.clone(),
+                alias: None,
+            };
+            let predicate = self.convert_expression(where_clause);
+            Some(Box::new(LogicalPlanNode::Filter {
+                input: Box::new(table_scan),
+                predicate,
+            }))
+        } else {
+            None
+        };
+
+        Ok(LogicalPlan::Delete {
+            table: delete.table_name,
+            filter,
+        })
+    }
+
+    fn update_to_logical(&self, update: UpdateStatement) -> Result<LogicalPlan> {
+        // TODO: Validate table exists once catalog supports mutable operations
+        // self.catalog.get_table(&update.table_name)?;
+
+        // Convert assignments
+        let assignments: Vec<(String, LogicalExpression)> = update
+            .assignments
+            .into_iter()
+            .map(|assignment| {
+                let expr = self.convert_expression(assignment.value);
+                (assignment.column, expr)
+            })
+            .collect();
+
+        // Create filter node if WHERE clause exists
+        let filter = if let Some(where_clause) = update.where_clause {
+            let table_scan = LogicalPlanNode::TableScan {
+                table_name: update.table_name.clone(),
+                alias: None,
+            };
+            let predicate = self.convert_expression(where_clause);
+            Some(Box::new(LogicalPlanNode::Filter {
+                input: Box::new(table_scan),
+                predicate,
+            }))
+        } else {
+            None
+        };
+
+        Ok(LogicalPlan::Update {
+            table: update.table_name,
+            assignments,
+            filter,
         })
     }
 
@@ -344,6 +429,7 @@ impl Planner {
     fn convert_select_items(
         &self,
         items: Vec<crate::sql::ast::SelectItem>,
+        table_name: Option<&str>,
     ) -> Result<Vec<(LogicalExpression, Option<String>)>> {
         use crate::sql::ast::SelectItem;
 
@@ -352,12 +438,52 @@ impl Planner {
         for item in items {
             match item {
                 SelectItem::AllColumns => {
-                    // For now, we'll handle this as a special case
-                    // In a real implementation, we'd expand this based on schema
-                    return Err(anyhow!("SELECT * not yet implemented"));
+                    // Expand * to all columns from the table
+                    if let Some(table_name) = table_name {
+                        // Get table info from catalog
+                        let table_info = self
+                            .catalog
+                            .get_table(table_name)?
+                            .ok_or_else(|| anyhow!("Table '{}' not found", table_name))?;
+
+                        // Add each column as a projection
+                        if let Some(column_names) = &table_info.column_names {
+                            for column_name in column_names {
+                                projections
+                                    .push((LogicalExpression::Column(column_name.clone()), None));
+                            }
+                        } else {
+                            // Table exists but has no column information - return error for now
+                            // In the future, we could load from pg_attribute
+                            return Err(anyhow!(
+                                "Table '{}' has no column information",
+                                table_name
+                            ));
+                        }
+                    } else {
+                        return Err(anyhow!("SELECT * requires a FROM clause"));
+                    }
                 }
-                SelectItem::AllColumnsFrom(_table) => {
-                    return Err(anyhow!("SELECT table.* not yet implemented"));
+                SelectItem::AllColumnsFrom(table) => {
+                    // Expand table.* to all columns from the specified table
+                    let table_info = self
+                        .catalog
+                        .get_table(&table)?
+                        .ok_or_else(|| anyhow!("Table '{}' not found", table))?;
+
+                    if let Some(column_names) = &table_info.column_names {
+                        for column_name in column_names {
+                            projections.push((
+                                LogicalExpression::QualifiedColumn(
+                                    table.clone(),
+                                    column_name.clone(),
+                                ),
+                                None,
+                            ));
+                        }
+                    } else {
+                        return Err(anyhow!("Table '{}' has no column information", table));
+                    }
                 }
                 SelectItem::Expression(expr, alias) => {
                     projections.push((self.convert_expression(expr), alias));

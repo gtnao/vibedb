@@ -355,7 +355,7 @@ impl Drop for PageWriteGuard {
                 frame.is_dirty.store(true, Ordering::SeqCst);
             }
         }
-        
+
         // Decrement pin count
         let should_unpin = {
             let frames = self.inner.frames.read();
@@ -378,7 +378,10 @@ impl Drop for BufferPoolManager {
     fn drop(&mut self) {
         // Flush all dirty pages before shutting down
         if let Err(e) = self.flush_all() {
-            eprintln!("Error flushing pages during BufferPoolManager shutdown: {}", e);
+            eprintln!(
+                "Error flushing pages during BufferPoolManager shutdown: {}",
+                e
+            );
         }
     }
 }

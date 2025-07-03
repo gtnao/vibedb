@@ -20,6 +20,19 @@ pub enum LogicalPlan {
         values: Vec<Vec<LogicalExpression>>,
     },
 
+    /// UPDATE statement
+    Update {
+        table: String,
+        assignments: Vec<(String, LogicalExpression)>,
+        filter: Option<Box<LogicalPlanNode>>,
+    },
+
+    /// DELETE statement
+    Delete {
+        table: String,
+        filter: Option<Box<LogicalPlanNode>>,
+    },
+
     /// CREATE TABLE statement
     CreateTable {
         table_name: String,

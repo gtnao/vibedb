@@ -49,7 +49,7 @@ impl Session {
     /// Executes a SQL query and returns the results.
     pub fn execute_sql(&self, sql: &str) -> Result<QueryResult> {
         eprintln!("DEBUG: Executing SQL: {}", sql);
-        
+
         // Parse the SQL
         let mut parser = Parser::new(sql.to_string());
         let statement = parser.parse()?;
@@ -104,14 +104,21 @@ impl Session {
                     crate::executor::InsertExecutor::new(table.clone(), value_rows, context);
                 executor.init()?;
 
-                let mut count = 0;
-                while executor.next()?.is_some() {
-                    count += 1;
+                let mut actual_count = 0;
+
+                // InsertExecutor returns a single tuple containing the count
+                if let Some(tuple) = executor.next()? {
+                    // Deserialize the count from the tuple
+                    let count_schema = vec![crate::access::DataType::Int32];
+                    let values = crate::access::deserialize_values(&tuple.data, &count_schema)?;
+                    if let crate::access::Value::Int32(count) = &values[0] {
+                        actual_count = *count as usize;
+                    }
                 }
 
                 Ok(QueryResult::Insert {
                     table_name: table,
-                    row_count: count,
+                    row_count: actual_count,
                 })
             }
             PhysicalPlan::CreateTable {
@@ -122,6 +129,92 @@ impl Session {
                 // CREATE TABLE is not supported through SQL yet
                 // Tables must be created programmatically
                 Err(anyhow!("CREATE TABLE not supported through SQL. Tables must be created programmatically."))
+            }
+            PhysicalPlan::Delete { table, filter } => {
+                let context = ExecutionContext::new(self.catalog.clone(), self.buffer_pool.clone());
+
+                // Create child executor if there's a filter
+                let child = if let Some(filter_node) = filter {
+                    Some(self.create_executor(*filter_node, context.clone())?)
+                } else {
+                    None
+                };
+
+                let mut executor =
+                    crate::executor::DeleteExecutor::new(table.clone(), child, context);
+                executor.init()?;
+
+                let mut actual_count = 0;
+
+                // DeleteExecutor returns a single tuple containing the count
+                if let Some(tuple) = executor.next()? {
+                    // Deserialize the count from the tuple
+                    let count_schema = vec![crate::access::DataType::Int32];
+                    let values = crate::access::deserialize_values(&tuple.data, &count_schema)?;
+                    if let crate::access::Value::Int32(count) = &values[0] {
+                        actual_count = *count as usize;
+                    }
+                }
+
+                Ok(QueryResult::Delete {
+                    table_name: table,
+                    row_count: actual_count,
+                })
+            }
+            PhysicalPlan::Update {
+                table,
+                assignments,
+                filter,
+            } => {
+                let context = ExecutionContext::new(self.catalog.clone(), self.buffer_pool.clone());
+
+                // Convert assignments to UpdateExpressions
+                let update_expressions: Vec<crate::executor::UpdateExpression> = assignments
+                    .into_iter()
+                    .map(|(column, expr)| {
+                        // For now, only support literal values in UPDATE
+                        match expr {
+                            LogicalExpression::Literal(val) => {
+                                Ok(crate::executor::UpdateExpression::new(column, val))
+                            }
+                            _ => Err(anyhow!(
+                                "Only literal values supported in UPDATE SET clause"
+                            )),
+                        }
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+
+                // Create child executor if there's a filter
+                let child = if let Some(filter_node) = filter {
+                    Some(self.create_executor(*filter_node, context.clone())?)
+                } else {
+                    None
+                };
+
+                let mut executor = crate::executor::UpdateExecutor::new(
+                    table.clone(),
+                    update_expressions,
+                    child,
+                    context,
+                );
+                executor.init()?;
+
+                let mut actual_count = 0;
+
+                // UpdateExecutor returns a single tuple containing the count
+                if let Some(tuple) = executor.next()? {
+                    // Deserialize the count from the tuple
+                    let count_schema = vec![crate::access::DataType::Int32];
+                    let values = crate::access::deserialize_values(&tuple.data, &count_schema)?;
+                    if let crate::access::Value::Int32(count) = &values[0] {
+                        actual_count = *count as usize;
+                    }
+                }
+
+                Ok(QueryResult::Update {
+                    table_name: table,
+                    row_count: actual_count,
+                })
             }
         }
     }
@@ -137,19 +230,72 @@ impl Session {
                 crate::executor::SeqScanExecutor::new(table_name, context),
             )),
             PhysicalPlanNode::Filter { input, predicate } => {
-                let child = self.create_executor(*input, context.clone())?;
+                let mut child = self.create_executor(*input, context.clone())?;
 
-                // Convert LogicalExpression to Expression
-                let expr = self.logical_to_expression(predicate)?;
+                // Initialize child first to get proper schema
+                eprintln!("DEBUG: Initializing child executor for filter");
+                child.init()?;
+
+                let child_schema = child.output_schema();
+
+                eprintln!(
+                    "DEBUG: Filter child schema has {} columns",
+                    child_schema.len()
+                );
+                for (i, col) in child_schema.iter().enumerate() {
+                    eprintln!(
+                        "DEBUG: Column[{}]: name='{}', type={:?}",
+                        i, col.name, col.data_type
+                    );
+                }
+
+                // Convert LogicalExpression to Expression with schema context
+                eprintln!("DEBUG: Converting predicate expression with schema");
+                let expr = self.logical_to_expression_with_schema(predicate, child_schema)?;
+                eprintln!("DEBUG: Converted predicate expression successfully");
 
                 Ok(Box::new(crate::executor::FilterExecutor::new(child, expr)))
             }
             PhysicalPlanNode::Projection { input, expressions } => {
-                let child = self.create_executor(*input, context)?;
+                let mut child = self.create_executor(*input, context)?;
 
-                // For now, we'll just project all columns
-                // TODO: Implement proper projection handling
-                let column_indices: Vec<usize> = (0..expressions.len()).collect();
+                // Initialize child first to get proper schema
+                eprintln!("DEBUG: Initializing child executor for projection");
+                child.init()?;
+
+                let child_schema = child.output_schema();
+
+                eprintln!("DEBUG: Child schema has {} columns", child_schema.len());
+                for (i, col) in child_schema.iter().enumerate() {
+                    eprintln!(
+                        "DEBUG: Column[{}]: name='{}', type={:?}",
+                        i, col.name, col.data_type
+                    );
+                }
+
+                // Resolve column indices from expressions
+                let mut column_indices = Vec::new();
+                for (expr, _alias) in &expressions {
+                    eprintln!("DEBUG: Processing projection expression: {:?}", expr);
+                    match expr {
+                        LogicalExpression::Column(name) => {
+                            // Find column index by name
+                            let index = child_schema
+                                .iter()
+                                .position(|col| col.name == *name)
+                                .ok_or_else(|| {
+                                    eprintln!("ERROR: Column '{}' not found in schema", name);
+                                    anyhow!("Column '{}' not found", name)
+                                })?;
+                            eprintln!("DEBUG: Resolved column '{}' to index {}", name, index);
+                            column_indices.push(index);
+                        }
+                        _ => {
+                            // For now, only support column references in projection
+                            return Err(anyhow!("Only column references supported in projection"));
+                        }
+                    }
+                }
 
                 Ok(Box::new(crate::executor::ProjectionExecutor::new(
                     child,
@@ -198,19 +344,47 @@ impl Session {
         &self,
         expr: LogicalExpression,
     ) -> Result<crate::expression::Expression> {
+        self.logical_to_expression_with_schema(expr, &[])
+    }
+
+    /// Converts a LogicalExpression to an Expression for the executor with schema context.
+    fn logical_to_expression_with_schema(
+        &self,
+        expr: LogicalExpression,
+        schema: &[crate::executor::ColumnInfo],
+    ) -> Result<crate::expression::Expression> {
         use crate::expression::{BinaryOperator, Expression};
         use crate::planner::logical::BinaryOp;
 
         match expr {
             LogicalExpression::Literal(val) => Ok(Expression::literal(val)),
-            LogicalExpression::Column(_name) => {
-                // For now, we'll use column index 0
-                // TODO: Resolve column name to index
-                Ok(Expression::column(0))
+            LogicalExpression::Column(name) => {
+                if schema.is_empty() {
+                    // No schema provided, use column index 0 as fallback
+                    // This happens during planning phase
+                    eprintln!(
+                        "WARNING: No schema provided for column '{}', using index 0",
+                        name
+                    );
+                    Ok(Expression::column(0))
+                } else {
+                    // Find column index by name
+                    eprintln!("DEBUG: Resolving column '{}' in schema", name);
+                    let index =
+                        schema
+                            .iter()
+                            .position(|col| col.name == name)
+                            .ok_or_else(|| {
+                                eprintln!("ERROR: Column '{}' not found in schema", name);
+                                anyhow!("Column '{}' not found", name)
+                            })?;
+                    eprintln!("DEBUG: Column '{}' resolved to index {}", name, index);
+                    Ok(Expression::column(index))
+                }
             }
             LogicalExpression::BinaryOp { left, op, right } => {
-                let left_expr = self.logical_to_expression(*left)?;
-                let right_expr = self.logical_to_expression(*right)?;
+                let left_expr = self.logical_to_expression_with_schema(*left, schema)?;
+                let right_expr = self.logical_to_expression_with_schema(*right, schema)?;
 
                 let binary_op = match op {
                     BinaryOp::Eq => BinaryOperator::Eq,
@@ -274,6 +448,16 @@ pub enum QueryResult {
     },
     /// Result of an INSERT query.
     Insert {
+        table_name: String,
+        row_count: usize,
+    },
+    /// Result of an UPDATE query.
+    Update {
+        table_name: String,
+        row_count: usize,
+    },
+    /// Result of a DELETE query.
+    Delete {
         table_name: String,
         row_count: usize,
     },

@@ -54,7 +54,8 @@ impl Executor for ProjectionExecutor {
             return Ok(());
         }
 
-        // Initialize child executor
+        // Initialize child executor if not already initialized
+        // Note: In some cases the child may already be initialized
         self.child.init()?;
 
         // Get child's output schema
