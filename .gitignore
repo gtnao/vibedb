@@ -1,5 +1,8 @@
 /target
 *.db
+*.wal
+dummy.wal/
+test_*.wal/
 
 # IMPORTANT: We explicitly do NOT ignore mod.rs files
 # If you see a mod.rs file, it's a VIOLATION of project rules!
