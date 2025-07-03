@@ -11,7 +11,7 @@ fn main() -> anyhow::Result<()> {
     let db = Arc::new(Database::create(db_path)?);
     
     // Create a session
-    let session = Session::new(db.clone());
+    let mut session = Session::new(db.clone());
     
     println!("=== Transaction SQL Demo ===");
     
@@ -58,8 +58,7 @@ fn main() -> anyhow::Result<()> {
     // Cleanup
     std::fs::remove_file(db_path).ok();
     
-    println!("\nNote: Transaction functionality returns placeholder messages for now.");
-    println!("      Full integration with TransactionManager is pending.");
+    println!("\nNote: Transaction functionality is now integrated with TransactionManager.");
     
     Ok(())
 }

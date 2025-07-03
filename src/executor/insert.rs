@@ -119,7 +119,39 @@ impl Executor for InsertExecutor {
                 .get_table_indexes_by_name(&self.table_name)?;
 
             for row in &self.values {
+                // Get current transaction ID (default to 0 if no transaction)
+                let tx_id = self.context.current_transaction
+                    .map(|tx| tx.0)
+                    .unwrap_or(0);
+                
+                // Get previous LSN for this transaction (TODO: track this properly)
+                let prev_lsn = crate::storage::wal::record::LSN::new();
+                
+                // Convert values to WAL format
+                let wal_values: Vec<crate::storage::wal::record::Value> = row.iter().map(|v| {
+                    match v {
+                        Value::Null => crate::storage::wal::record::Value::Null,
+                        Value::Boolean(b) => crate::storage::wal::record::Value::Boolean(*b),
+                        Value::Int32(i) => crate::storage::wal::record::Value::Integer(*i as i64),
+                        Value::String(s) => crate::storage::wal::record::Value::String(s.clone()),
+                    }
+                }).collect();
+                
+                // Insert the tuple first to get the TupleId
                 let tuple_id = heap.insert_values(row, &self.schema)?;
+                
+                // Write WAL record AFTER insert (to have the actual page_id and slot)
+                let lsn = self.context.wal_manager.get_next_lsn();
+                let wal_record = crate::storage::wal::record::WalRecord::insert(
+                    lsn,
+                    prev_lsn,
+                    tx_id,
+                    tuple_id.page_id,
+                    tuple_id.slot_id,
+                    wal_values,
+                );
+                
+                self.context.wal_manager.write_record(&wal_record)?;
 
                 // Update all indexes
                 for index_info in &indexes {

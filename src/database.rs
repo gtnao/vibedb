@@ -5,6 +5,9 @@ use crate::catalog::Catalog;
 use crate::storage::buffer::lru::LruReplacer;
 use crate::storage::buffer::BufferPoolManager;
 use crate::storage::disk::PageManager;
+use crate::storage::wal::manager::WalManager;
+use crate::transaction::manager::TransactionManager;
+use crate::concurrency::mvcc::MVCCManager;
 use anyhow::{bail, Result};
 use std::path::Path;
 use std::sync::Arc;
@@ -13,6 +16,9 @@ use std::sync::Arc;
 pub struct Database {
     pub buffer_pool: Arc<BufferPoolManager>,
     pub catalog: Arc<Catalog>,
+    pub wal_manager: Arc<WalManager>,
+    pub transaction_manager: Arc<TransactionManager>,
+    pub mvcc_manager: Arc<MVCCManager>,
 }
 
 impl Database {
@@ -26,14 +32,27 @@ impl Database {
         // Create new database file
         let page_manager = PageManager::create(path)?;
         let replacer = Box::new(LruReplacer::new(64)); // Default 64 page buffer pool
-        let buffer_pool = BufferPoolManager::new(page_manager, replacer, 64);
+        let buffer_pool = Arc::new(BufferPoolManager::new(page_manager, replacer, 64));
 
         // Initialize catalog
-        let catalog = Catalog::initialize(buffer_pool.clone())?;
+        let catalog = Arc::new(Catalog::initialize((*buffer_pool).clone())?);
+        
+        // Initialize WAL manager
+        let wal_path = path.with_extension("wal");
+        let wal_manager = Arc::new(WalManager::create(&wal_path)?);
+        
+        // Initialize transaction manager
+        let transaction_manager = Arc::new(TransactionManager::new());
+        
+        // Initialize MVCC manager
+        let mvcc_manager = Arc::new(MVCCManager::new());
 
         Ok(Self {
-            buffer_pool: Arc::new(buffer_pool),
-            catalog: Arc::new(catalog),
+            buffer_pool,
+            catalog,
+            wal_manager,
+            transaction_manager,
+            mvcc_manager,
         })
     }
 
@@ -47,14 +66,30 @@ impl Database {
         // Open existing database file
         let page_manager = PageManager::open(path)?;
         let replacer = Box::new(LruReplacer::new(64));
-        let buffer_pool = BufferPoolManager::new(page_manager, replacer, 64);
+        let buffer_pool = Arc::new(BufferPoolManager::new(page_manager, replacer, 64));
 
         // Open catalog
-        let catalog = Catalog::open(buffer_pool.clone())?;
+        let catalog = Arc::new(Catalog::open((*buffer_pool).clone())?);
+        
+        // Open WAL manager
+        let wal_path = path.with_extension("wal");
+        let wal_manager = Arc::new(WalManager::open(&wal_path)?);
+        
+        // Initialize transaction manager
+        let transaction_manager = Arc::new(TransactionManager::new());
+        
+        // Initialize MVCC manager
+        let mvcc_manager = Arc::new(MVCCManager::new());
+        
+        // TODO: Perform recovery using WAL
+        // recovery::recover(&wal_manager, &buffer_pool)?;
 
         Ok(Self {
-            buffer_pool: Arc::new(buffer_pool),
-            catalog: Arc::new(catalog),
+            buffer_pool,
+            catalog,
+            wal_manager,
+            transaction_manager,
+            mvcc_manager,
         })
     }
 

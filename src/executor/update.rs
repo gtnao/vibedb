@@ -105,6 +105,14 @@ impl UpdateExecutor {
             .as_mut()
             .ok_or_else(|| anyhow::anyhow!("Heap not available"))?;
 
+        // Get current transaction ID (default to 0 if no transaction)
+        let tx_id = self.context.current_transaction
+            .map(|tx| tx.0)
+            .unwrap_or(0);
+        
+        // Get previous LSN for this transaction (TODO: track this properly)
+        let mut prev_lsn = crate::storage::wal::record::LSN::new();
+        
         // Now update them
         for (tuple_id, old_values, new_values) in updates_to_apply {
             // Update indexes: delete old entries, insert new ones
@@ -149,6 +157,41 @@ impl UpdateExecutor {
                 }
             }
 
+            // Write WAL record BEFORE update
+            let lsn = self.context.wal_manager.get_next_lsn();
+            
+            // Convert values to WAL format
+            let wal_old_values: Vec<crate::storage::wal::record::Value> = old_values.iter().map(|v| {
+                match v {
+                    Value::Null => crate::storage::wal::record::Value::Null,
+                    Value::Boolean(b) => crate::storage::wal::record::Value::Boolean(*b),
+                    Value::Int32(i) => crate::storage::wal::record::Value::Integer(*i as i64),
+                    Value::String(s) => crate::storage::wal::record::Value::String(s.clone()),
+                }
+            }).collect();
+            
+            let wal_new_values: Vec<crate::storage::wal::record::Value> = new_values.iter().map(|v| {
+                match v {
+                    Value::Null => crate::storage::wal::record::Value::Null,
+                    Value::Boolean(b) => crate::storage::wal::record::Value::Boolean(*b),
+                    Value::Int32(i) => crate::storage::wal::record::Value::Integer(*i as i64),
+                    Value::String(s) => crate::storage::wal::record::Value::String(s.clone()),
+                }
+            }).collect();
+            
+            let wal_record = crate::storage::wal::record::WalRecord::update(
+                lsn,
+                prev_lsn,
+                tx_id,
+                tuple_id.page_id,
+                tuple_id.slot_id,
+                wal_old_values,
+                wal_new_values,
+            );
+            
+            self.context.wal_manager.write_record(&wal_record)?;
+            prev_lsn = lsn;
+            
             // Update tuple in heap
             let data = crate::access::serialize_values(&new_values, &self.schema)?;
             let new_tuple_id = heap.update(tuple_id, &data)?;
@@ -233,6 +276,14 @@ impl UpdateExecutor {
             .as_mut()
             .ok_or_else(|| anyhow::anyhow!("Heap not available"))?;
 
+        // Get current transaction ID (default to 0 if no transaction)
+        let tx_id = self.context.current_transaction
+            .map(|tx| tx.0)
+            .unwrap_or(0);
+        
+        // Get previous LSN for this transaction (TODO: track this properly)
+        let mut prev_lsn = crate::storage::wal::record::LSN::new();
+        
         // Now update them
         for (tuple_id, old_values, new_values) in updates_to_apply {
             // Update indexes: delete old entries, insert new ones
@@ -277,6 +328,41 @@ impl UpdateExecutor {
                 }
             }
 
+            // Write WAL record BEFORE update
+            let lsn = self.context.wal_manager.get_next_lsn();
+            
+            // Convert values to WAL format
+            let wal_old_values: Vec<crate::storage::wal::record::Value> = old_values.iter().map(|v| {
+                match v {
+                    Value::Null => crate::storage::wal::record::Value::Null,
+                    Value::Boolean(b) => crate::storage::wal::record::Value::Boolean(*b),
+                    Value::Int32(i) => crate::storage::wal::record::Value::Integer(*i as i64),
+                    Value::String(s) => crate::storage::wal::record::Value::String(s.clone()),
+                }
+            }).collect();
+            
+            let wal_new_values: Vec<crate::storage::wal::record::Value> = new_values.iter().map(|v| {
+                match v {
+                    Value::Null => crate::storage::wal::record::Value::Null,
+                    Value::Boolean(b) => crate::storage::wal::record::Value::Boolean(*b),
+                    Value::Int32(i) => crate::storage::wal::record::Value::Integer(*i as i64),
+                    Value::String(s) => crate::storage::wal::record::Value::String(s.clone()),
+                }
+            }).collect();
+            
+            let wal_record = crate::storage::wal::record::WalRecord::update(
+                lsn,
+                prev_lsn,
+                tx_id,
+                tuple_id.page_id,
+                tuple_id.slot_id,
+                wal_old_values,
+                wal_new_values,
+            );
+            
+            self.context.wal_manager.write_record(&wal_record)?;
+            prev_lsn = lsn;
+            
             // Update tuple in heap
             let data = crate::access::serialize_values(&new_values, &self.schema)?;
             let new_tuple_id = heap.update(tuple_id, &data)?;

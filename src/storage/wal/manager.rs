@@ -169,6 +169,31 @@ impl WalManager {
             flush_lsn: Arc::new(RwLock::new(LSN::new())),
         })
     }
+    
+    /// Create a new WAL manager with a simple path
+    pub fn create(path: &Path) -> Result<Self, StorageError> {
+        let config = WalConfig {
+            wal_dir: path.to_path_buf(),
+            ..Default::default()
+        };
+        
+        let manager = Self::new(config)?;
+        manager.initialize()?;
+        Ok(manager)
+    }
+    
+    /// Open an existing WAL manager
+    pub fn open(path: &Path) -> Result<Self, StorageError> {
+        let config = WalConfig {
+            wal_dir: path.to_path_buf(),
+            ..Default::default()
+        };
+        
+        let manager = Self::new(config)?;
+        // TODO: Scan existing WAL files and set correct LSN
+        manager.initialize()?;
+        Ok(manager)
+    }
 
     /// Initialize the WAL manager by opening or creating the first WAL file.
     pub fn initialize(&self) -> Result<(), StorageError> {

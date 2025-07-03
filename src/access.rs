@@ -13,11 +13,13 @@
 
 pub mod btree;
 pub mod heap;
+pub mod mvcc_heap;
 pub mod scan;
 pub mod tuple;
 pub mod value;
 
 pub use heap::TableHeap;
+pub use mvcc_heap::MVCCTableHeap;
 pub use scan::TableScanner;
 pub use tuple::{Tuple, TupleId};
 pub use value::{deserialize_values, serialize_values, DataType, Value};

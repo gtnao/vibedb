@@ -73,13 +73,45 @@ impl ColumnInfo {
 pub struct ExecutionContext {
     pub catalog: Arc<Catalog>,
     pub buffer_pool: Arc<BufferPoolManager>,
+    pub wal_manager: Arc<crate::storage::wal::manager::WalManager>,
+    pub transaction_manager: Arc<crate::transaction::manager::TransactionManager>,
+    pub mvcc_manager: Arc<crate::concurrency::mvcc::MVCCManager>,
+    pub current_transaction: Option<crate::transaction::id::TransactionId>,
 }
 
 impl ExecutionContext {
     pub fn new(catalog: Arc<Catalog>, buffer_pool: Arc<BufferPoolManager>) -> Self {
+        // Create dummy managers for backward compatibility
+        let wal_path = std::path::Path::new("dummy.wal");
+        let wal_manager = Arc::new(crate::storage::wal::manager::WalManager::create(wal_path).unwrap());
+        let transaction_manager = Arc::new(crate::transaction::manager::TransactionManager::new());
+        let mvcc_manager = Arc::new(crate::concurrency::mvcc::MVCCManager::new());
+        
         Self {
             catalog,
             buffer_pool,
+            wal_manager,
+            transaction_manager,
+            mvcc_manager,
+            current_transaction: None,
+        }
+    }
+    
+    pub fn with_managers(
+        catalog: Arc<Catalog>,
+        buffer_pool: Arc<BufferPoolManager>,
+        wal_manager: Arc<crate::storage::wal::manager::WalManager>,
+        transaction_manager: Arc<crate::transaction::manager::TransactionManager>,
+        mvcc_manager: Arc<crate::concurrency::mvcc::MVCCManager>,
+        current_transaction: Option<crate::transaction::id::TransactionId>,
+    ) -> Self {
+        Self {
+            catalog,
+            buffer_pool,
+            wal_manager,
+            transaction_manager,
+            mvcc_manager,
+            current_transaction,
         }
     }
 }

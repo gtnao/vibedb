@@ -74,6 +74,14 @@ impl DeleteExecutor {
             tuples_to_delete.push((tuple_id, values));
         }
 
+        // Get current transaction ID (default to 0 if no transaction)
+        let tx_id = self.context.current_transaction
+            .map(|tx| tx.0)
+            .unwrap_or(0);
+        
+        // Get previous LSN for this transaction (TODO: track this properly)
+        let mut prev_lsn = crate::storage::wal::record::LSN::new();
+        
         // Now delete them
         for (tuple_id, values) in tuples_to_delete {
             // Delete from indexes first
@@ -122,6 +130,31 @@ impl DeleteExecutor {
                 }
             }
 
+            // Write WAL record BEFORE delete
+            let lsn = self.context.wal_manager.get_next_lsn();
+            
+            // Convert values to WAL format
+            let wal_values: Vec<crate::storage::wal::record::Value> = values.iter().map(|v| {
+                match v {
+                    Value::Null => crate::storage::wal::record::Value::Null,
+                    Value::Boolean(b) => crate::storage::wal::record::Value::Boolean(*b),
+                    Value::Int32(i) => crate::storage::wal::record::Value::Integer(*i as i64),
+                    Value::String(s) => crate::storage::wal::record::Value::String(s.clone()),
+                }
+            }).collect();
+            
+            let wal_record = crate::storage::wal::record::WalRecord::delete(
+                lsn,
+                prev_lsn,
+                tx_id,
+                tuple_id.page_id,
+                tuple_id.slot_id,
+                wal_values,
+            );
+            
+            self.context.wal_manager.write_record(&wal_record)?;
+            prev_lsn = lsn;
+            
             // Delete from heap
             heap.delete(tuple_id)?;
             delete_count += 1;
@@ -161,6 +194,14 @@ impl DeleteExecutor {
             tuples_to_delete.push((tuple.tuple_id, values));
         }
 
+        // Get current transaction ID (default to 0 if no transaction)
+        let tx_id = self.context.current_transaction
+            .map(|tx| tx.0)
+            .unwrap_or(0);
+        
+        // Get previous LSN for this transaction (TODO: track this properly)
+        let mut prev_lsn = crate::storage::wal::record::LSN::new();
+        
         // Now delete them
         for (tuple_id, values) in tuples_to_delete {
             // Delete from indexes first
@@ -208,6 +249,31 @@ impl DeleteExecutor {
                 }
             }
 
+            // Write WAL record BEFORE delete
+            let lsn = self.context.wal_manager.get_next_lsn();
+            
+            // Convert values to WAL format
+            let wal_values: Vec<crate::storage::wal::record::Value> = values.iter().map(|v| {
+                match v {
+                    Value::Null => crate::storage::wal::record::Value::Null,
+                    Value::Boolean(b) => crate::storage::wal::record::Value::Boolean(*b),
+                    Value::Int32(i) => crate::storage::wal::record::Value::Integer(*i as i64),
+                    Value::String(s) => crate::storage::wal::record::Value::String(s.clone()),
+                }
+            }).collect();
+            
+            let wal_record = crate::storage::wal::record::WalRecord::delete(
+                lsn,
+                prev_lsn,
+                tx_id,
+                tuple_id.page_id,
+                tuple_id.slot_id,
+                wal_values,
+            );
+            
+            self.context.wal_manager.write_record(&wal_record)?;
+            prev_lsn = lsn;
+            
             // Delete from heap
             heap.delete(tuple_id)?;
             delete_count += 1;

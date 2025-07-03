@@ -19,10 +19,16 @@ pub struct Session {
     pub catalog: Arc<Catalog>,
     /// The buffer pool manager.
     pub buffer_pool: Arc<BufferPoolManager>,
+    /// WAL manager.
+    pub wal_manager: Arc<crate::storage::wal::manager::WalManager>,
+    /// Transaction manager.
+    pub transaction_manager: Arc<crate::transaction::manager::TransactionManager>,
+    /// MVCC manager.
+    pub mvcc_manager: Arc<crate::concurrency::mvcc::MVCCManager>,
     /// Session ID for tracking.
     pub session_id: u64,
     /// Current transaction ID (if any).
-    pub transaction_id: Option<u64>,
+    pub current_transaction: Option<crate::transaction::id::TransactionId>,
 }
 
 impl Session {
@@ -30,6 +36,9 @@ impl Session {
     pub fn new(database: Arc<Database>) -> Self {
         let catalog = database.catalog.clone();
         let buffer_pool = database.buffer_pool.clone();
+        let wal_manager = database.wal_manager.clone();
+        let transaction_manager = database.transaction_manager.clone();
+        let mvcc_manager = database.mvcc_manager.clone();
 
         // Generate a simple session ID
         let session_id = std::time::SystemTime::now()
@@ -41,13 +50,16 @@ impl Session {
             database,
             catalog,
             buffer_pool,
+            wal_manager,
+            transaction_manager,
+            mvcc_manager,
             session_id,
-            transaction_id: None,
+            current_transaction: None,
         }
     }
 
     /// Executes a SQL query and returns the results.
-    pub fn execute_sql(&self, sql: &str) -> Result<QueryResult> {
+    pub fn execute_sql(&mut self, sql: &str) -> Result<QueryResult> {
         eprintln!("DEBUG: Executing SQL: {}", sql);
 
         // Parse the SQL
@@ -64,7 +76,14 @@ impl Session {
         match physical_plan {
             PhysicalPlan::Select(plan_node) => {
                 eprintln!("DEBUG: Executing SELECT plan");
-                let context = ExecutionContext::new(self.catalog.clone(), self.buffer_pool.clone());
+                let context = ExecutionContext::with_managers(
+                    self.catalog.clone(),
+                    self.buffer_pool.clone(),
+                    self.wal_manager.clone(),
+                    self.transaction_manager.clone(),
+                    self.mvcc_manager.clone(),
+                    self.current_transaction,
+                );
                 let mut executor = self.create_executor(*plan_node, context)?;
                 eprintln!("DEBUG: Created executor");
 
@@ -99,7 +118,14 @@ impl Session {
                     })
                     .collect::<Result<Vec<_>>>()?;
 
-                let context = ExecutionContext::new(self.catalog.clone(), self.buffer_pool.clone());
+                let context = ExecutionContext::with_managers(
+                    self.catalog.clone(),
+                    self.buffer_pool.clone(),
+                    self.wal_manager.clone(),
+                    self.transaction_manager.clone(),
+                    self.mvcc_manager.clone(),
+                    self.current_transaction,
+                );
                 let mut executor =
                     crate::executor::InsertExecutor::new(table.clone(), value_rows, context);
                 executor.init()?;
@@ -160,7 +186,14 @@ impl Session {
                 })
             }
             PhysicalPlan::Delete { table, filter } => {
-                let context = ExecutionContext::new(self.catalog.clone(), self.buffer_pool.clone());
+                let context = ExecutionContext::with_managers(
+                    self.catalog.clone(),
+                    self.buffer_pool.clone(),
+                    self.wal_manager.clone(),
+                    self.transaction_manager.clone(),
+                    self.mvcc_manager.clone(),
+                    self.current_transaction,
+                );
 
                 // Create child executor if there's a filter
                 let child = if let Some(filter_node) = filter {
@@ -195,7 +228,14 @@ impl Session {
                 assignments,
                 filter,
             } => {
-                let context = ExecutionContext::new(self.catalog.clone(), self.buffer_pool.clone());
+                let context = ExecutionContext::with_managers(
+                    self.catalog.clone(),
+                    self.buffer_pool.clone(),
+                    self.wal_manager.clone(),
+                    self.transaction_manager.clone(),
+                    self.mvcc_manager.clone(),
+                    self.current_transaction,
+                );
 
                 // Convert assignments to UpdateExpressions
                 let update_expressions: Vec<crate::executor::UpdateExpression> = assignments
@@ -246,25 +286,41 @@ impl Session {
                 })
             }
             PhysicalPlan::BeginTransaction => {
-                // For now, we'll return a success message
-                // TODO: Integrate with TransactionManager
+                // Check if there's already an active transaction
+                if self.current_transaction.is_some() {
+                    return Err(anyhow!("A transaction is already in progress"));
+                }
+                
+                // Begin a new transaction
+                let tx_id = self.transaction_manager.begin()?;
+                self.current_transaction.replace(tx_id);
                 Ok(QueryResult::Transaction {
-                    message: "BEGIN".to_string(),
+                    message: format!("BEGIN (Transaction ID: {:?})", tx_id),
                 })
             }
             PhysicalPlan::Commit => {
-                // For now, we'll return a success message
-                // TODO: Integrate with TransactionManager
-                Ok(QueryResult::Transaction {
-                    message: "COMMIT".to_string(),
-                })
+                // Commit the current transaction
+                if let Some(tx_id) = self.current_transaction {
+                    self.transaction_manager.commit(tx_id)?;
+                    self.current_transaction.take();
+                    Ok(QueryResult::Transaction {
+                        message: "COMMIT".to_string(),
+                    })
+                } else {
+                    Err(anyhow!("No active transaction"))
+                }
             }
             PhysicalPlan::Rollback => {
-                // For now, we'll return a success message
-                // TODO: Integrate with TransactionManager
-                Ok(QueryResult::Transaction {
-                    message: "ROLLBACK".to_string(),
-                })
+                // Rollback the current transaction
+                if let Some(tx_id) = self.current_transaction {
+                    self.transaction_manager.abort(tx_id)?;
+                    self.current_transaction.take();
+                    Ok(QueryResult::Transaction {
+                        message: "ROLLBACK".to_string(),
+                    })
+                } else {
+                    Err(anyhow!("No active transaction"))
+                }
             }
         }
     }
@@ -517,36 +573,6 @@ impl Session {
             _ => Err(anyhow!("Unsupported expression type")),
         }
     }
-
-    /// Begins a new transaction.
-    pub fn begin_transaction(&mut self) -> Result<()> {
-        if self.transaction_id.is_some() {
-            return Err(anyhow!("Transaction already in progress"));
-        }
-        // TODO: Implement actual transaction begin
-        self.transaction_id = Some(1);
-        Ok(())
-    }
-
-    /// Commits the current transaction.
-    pub fn commit_transaction(&mut self) -> Result<()> {
-        if self.transaction_id.is_none() {
-            return Err(anyhow!("No transaction in progress"));
-        }
-        // TODO: Implement actual transaction commit
-        self.transaction_id = None;
-        Ok(())
-    }
-
-    /// Rolls back the current transaction.
-    pub fn rollback_transaction(&mut self) -> Result<()> {
-        if self.transaction_id.is_none() {
-            return Err(anyhow!("No transaction in progress"));
-        }
-        // TODO: Implement actual transaction rollback
-        self.transaction_id = None;
-        Ok(())
-    }
 }
 
 /// Result of executing a query.
@@ -588,7 +614,7 @@ mod tests {
         let session = Session::new(db.clone());
 
         assert!(session.session_id > 0);
-        assert!(session.transaction_id.is_none());
+        assert!(session.current_transaction.is_none());
 
         // Clean up
         std::fs::remove_file("test_session.db").ok();
@@ -602,23 +628,27 @@ mod tests {
         let mut session = Session::new(db.clone());
 
         // Begin transaction
-        session.begin_transaction()?;
-        assert!(session.transaction_id.is_some());
+        let result = session.execute_sql("BEGIN")?;
+        assert!(matches!(result, QueryResult::Transaction { .. }));
+        assert!(session.current_transaction.is_some());
 
         // Cannot begin another transaction
-        assert!(session.begin_transaction().is_err());
+        let result = session.execute_sql("BEGIN");
+        assert!(result.is_err());
 
         // Commit transaction
-        session.commit_transaction()?;
-        assert!(session.transaction_id.is_none());
+        let result = session.execute_sql("COMMIT")?;
+        assert!(matches!(result, QueryResult::Transaction { .. }));
+        assert!(session.current_transaction.is_none());
 
         // Cannot commit without transaction
-        assert!(session.commit_transaction().is_err());
+        let result = session.execute_sql("COMMIT");
+        assert!(result.is_err());
 
         // Begin and rollback
-        session.begin_transaction()?;
-        session.rollback_transaction()?;
-        assert!(session.transaction_id.is_none());
+        session.execute_sql("BEGIN")?;
+        session.execute_sql("ROLLBACK")?;
+        assert!(session.current_transaction.is_none());
 
         // Clean up
         std::fs::remove_file("test_session_tx.db").ok();
