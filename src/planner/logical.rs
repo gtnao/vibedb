@@ -39,6 +39,15 @@ pub enum LogicalPlan {
         columns: Vec<ColumnDefinition>,
         constraints: Vec<TableConstraint>,
     },
+
+    /// BEGIN TRANSACTION
+    BeginTransaction,
+
+    /// COMMIT TRANSACTION
+    Commit,
+
+    /// ROLLBACK TRANSACTION
+    Rollback,
 }
 
 /// Logical plan node for query trees
@@ -177,9 +186,10 @@ pub enum LogicalExpression {
 /// Aggregate expression
 #[derive(Debug, Clone, PartialEq)]
 pub struct AggregateExpression {
-    pub function: AggregateFunction,
-    pub expression: Option<LogicalExpression>,
+    pub function: String,
+    pub args: Vec<LogicalExpression>,
     pub distinct: bool,
+    pub alias: Option<String>,
 }
 
 /// Aggregate functions

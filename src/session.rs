@@ -122,13 +122,42 @@ impl Session {
                 })
             }
             PhysicalPlan::CreateTable {
-                table_name: _,
-                columns: _,
+                table_name,
+                columns,
                 constraints: _,
             } => {
-                // CREATE TABLE is not supported through SQL yet
-                // Tables must be created programmatically
-                Err(anyhow!("CREATE TABLE not supported through SQL. Tables must be created programmatically."))
+                // Convert SQL DataType to access DataType
+                let converted_columns: Vec<(&str, crate::access::DataType)> = columns
+                    .iter()
+                    .map(|col| {
+                        let data_type = match &col.data_type {
+                            crate::sql::ast::DataType::Int
+                            | crate::sql::ast::DataType::SmallInt => crate::access::DataType::Int32,
+                            crate::sql::ast::DataType::BigInt => crate::access::DataType::Int32, // TODO: Add Int64
+                            crate::sql::ast::DataType::Boolean => crate::access::DataType::Boolean,
+                            crate::sql::ast::DataType::Varchar(_)
+                            | crate::sql::ast::DataType::Char(_)
+                            | crate::sql::ast::DataType::Text => crate::access::DataType::Varchar,
+                            _ => {
+                                return Err(anyhow!(
+                                    "Unsupported data type: {:?}",
+                                    col.data_type
+                                ))
+                            }
+                        };
+                        Ok((col.name.as_str(), data_type))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                
+                // Create the table using the catalog
+                let _table_info = self.catalog.create_table_with_columns(
+                    &table_name,
+                    converted_columns.into_iter().collect(),
+                )?;
+                
+                Ok(QueryResult::CreateTable { 
+                    table_name: table_name.clone() 
+                })
             }
             PhysicalPlan::Delete { table, filter } => {
                 let context = ExecutionContext::new(self.catalog.clone(), self.buffer_pool.clone());
@@ -214,6 +243,27 @@ impl Session {
                 Ok(QueryResult::Update {
                     table_name: table,
                     row_count: actual_count,
+                })
+            }
+            PhysicalPlan::BeginTransaction => {
+                // For now, we'll return a success message
+                // TODO: Integrate with TransactionManager
+                Ok(QueryResult::Transaction {
+                    message: "BEGIN".to_string(),
+                })
+            }
+            PhysicalPlan::Commit => {
+                // For now, we'll return a success message
+                // TODO: Integrate with TransactionManager
+                Ok(QueryResult::Transaction {
+                    message: "COMMIT".to_string(),
+                })
+            }
+            PhysicalPlan::Rollback => {
+                // For now, we'll return a success message
+                // TODO: Integrate with TransactionManager
+                Ok(QueryResult::Transaction {
+                    message: "ROLLBACK".to_string(),
                 })
             }
         }
@@ -334,6 +384,66 @@ impl Session {
                     limit_count,
                     offset_count,
                 )))
+            }
+            PhysicalPlanNode::HashAggregate {
+                input,
+                group_exprs,
+                aggregate_exprs,
+            } => {
+                let child = self.create_executor(*input, context)?;
+
+                // Convert group by expressions
+                let group_indices: Vec<usize> = group_exprs
+                    .into_iter()
+                    .filter_map(|expr| {
+                        // For now, only support column references in GROUP BY
+                        match expr {
+                            LogicalExpression::Column(name) => {
+                                // This is a simplified approach - in a real system we'd resolve column names to indices
+                                // For now, assume it's a column index encoded as a string
+                                name.parse::<usize>().ok()
+                            }
+                            _ => None,
+                        }
+                    })
+                    .collect();
+
+                // Convert aggregate expressions
+                let agg_specs: Vec<crate::executor::AggregateSpec> = aggregate_exprs
+                    .into_iter()
+                    .map(|agg_expr| {
+                        let func = match agg_expr.function.to_uppercase().as_str() {
+                            "COUNT" => crate::executor::AggregateFunction::Count,
+                            "SUM" => crate::executor::AggregateFunction::Sum,
+                            "AVG" => crate::executor::AggregateFunction::Avg,
+                            "MIN" => crate::executor::AggregateFunction::Min,
+                            "MAX" => crate::executor::AggregateFunction::Max,
+                            _ => crate::executor::AggregateFunction::Count, // Default
+                        };
+
+                        // Extract column index from first argument
+                        let column_idx = if agg_expr.args.is_empty() {
+                            None // COUNT(*)
+                        } else {
+                            match &agg_expr.args[0] {
+                                LogicalExpression::Column(name) => name.parse::<usize>().ok(),
+                                _ => None,
+                            }
+                        };
+
+                        let mut spec = crate::executor::AggregateSpec::new(func, column_idx);
+                        if let Some(alias) = agg_expr.alias {
+                            spec.alias = Some(alias);
+                        }
+                        spec
+                    })
+                    .collect();
+
+                Ok(Box::new(crate::executor::HashAggregateExecutor::new(
+                    child,
+                    crate::executor::GroupByClause::new(group_indices),
+                    agg_specs,
+                )?))
             }
             _ => Err(anyhow!("Unsupported physical plan node")),
         }
@@ -463,6 +573,8 @@ pub enum QueryResult {
     },
     /// Result of a CREATE TABLE query.
     CreateTable { table_name: String },
+    /// Result of a transaction control command.
+    Transaction { message: String },
 }
 
 #[cfg(test)]

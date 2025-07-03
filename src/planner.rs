@@ -45,6 +45,9 @@ impl Planner {
                 Err(anyhow!("CREATE INDEX not yet implemented in planner"))
             }
             Statement::DropIndex(_) => Err(anyhow!("DROP INDEX not yet implemented in planner")),
+            Statement::BeginTransaction => Ok(LogicalPlan::BeginTransaction),
+            Statement::Commit => Ok(LogicalPlan::Commit),
+            Statement::Rollback => Ok(LogicalPlan::Rollback),
         }
     }
 
@@ -90,6 +93,9 @@ impl Planner {
                 columns,
                 constraints,
             }),
+            LogicalPlan::BeginTransaction => Ok(PhysicalPlan::BeginTransaction),
+            LogicalPlan::Commit => Ok(PhysicalPlan::Commit),
+            LogicalPlan::Rollback => Ok(PhysicalPlan::Rollback),
         }
     }
 

@@ -39,6 +39,15 @@ pub enum PhysicalPlan {
         columns: Vec<ColumnDefinition>,
         constraints: Vec<TableConstraint>,
     },
+
+    /// BEGIN TRANSACTION
+    BeginTransaction,
+
+    /// COMMIT TRANSACTION
+    Commit,
+
+    /// ROLLBACK TRANSACTION
+    Rollback,
 }
 
 /// Physical plan node for query execution trees
@@ -162,6 +171,9 @@ impl PhysicalPlan {
                 }
                 result
             }
+            PhysicalPlan::BeginTransaction => "BEGIN TRANSACTION".to_string(),
+            PhysicalPlan::Commit => "COMMIT".to_string(),
+            PhysicalPlan::Rollback => "ROLLBACK".to_string(),
         }
     }
 }

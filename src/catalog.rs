@@ -19,9 +19,9 @@ pub use table_info::{CustomDeserializer, TableId, TableInfo};
 
 pub struct Catalog {
     buffer_pool: BufferPoolManager,
-    catalog_heap: TableHeap,
-    attribute_heap: Option<TableHeap>,
-    index_heap: Option<TableHeap>,
+    catalog_heap: RwLock<TableHeap>,
+    attribute_heap: RwLock<Option<TableHeap>>,
+    index_heap: RwLock<Option<TableHeap>>,
     table_cache: RwLock<HashMap<String, TableInfo>>,
     column_cache: RwLock<HashMap<TableId, Vec<ColumnInfo>>>,
     index_cache: RwLock<HashMap<TableId, Vec<IndexInfo>>>,
@@ -185,9 +185,9 @@ impl Catalog {
 
         Ok(Self {
             buffer_pool,
-            catalog_heap,
-            attribute_heap: Some(attribute_heap),
-            index_heap: None, // Will be created on first index creation
+            catalog_heap: RwLock::new(catalog_heap),
+            attribute_heap: RwLock::new(Some(attribute_heap)),
+            index_heap: RwLock::new(None), // Will be created on first index creation
             table_cache: RwLock::new(initial_table_cache),
             column_cache: RwLock::new(HashMap::new()),
             index_cache: RwLock::new(HashMap::new()),
@@ -285,9 +285,9 @@ impl Catalog {
 
         Ok(Self {
             buffer_pool,
-            catalog_heap,
-            attribute_heap,
-            index_heap,
+            catalog_heap: RwLock::new(catalog_heap),
+            attribute_heap: RwLock::new(attribute_heap),
+            index_heap: RwLock::new(index_heap),
             table_cache: RwLock::new(table_cache),
             column_cache: RwLock::new(HashMap::new()),
             index_cache: RwLock::new(HashMap::new()),
@@ -357,7 +357,7 @@ impl Catalog {
     }
 
     /// Create a new table
-    pub fn create_table(&mut self, name: &str) -> Result<TableInfo> {
+    pub fn create_table(&self, name: &str) -> Result<TableInfo> {
         // Check if table already exists
         if self.get_table(name)?.is_some() {
             bail!("Table '{}' already exists", name);
@@ -387,7 +387,10 @@ impl Catalog {
         };
 
         // Insert into catalog
-        self.catalog_heap.insert(&table_info.serialize())?;
+        {
+            let mut catalog_heap = self.catalog_heap.write().unwrap();
+            catalog_heap.insert(&table_info.serialize())?;
+        }
 
         // Update cache
         {
@@ -400,7 +403,7 @@ impl Catalog {
 
     /// Create a table with columns
     pub fn create_table_with_columns(
-        &mut self,
+        &self,
         name: &str,
         columns: Vec<(&str, DataType)>,
     ) -> Result<TableInfo> {
@@ -412,20 +415,29 @@ impl Catalog {
         let mut schema = Vec::new();
 
         // Insert column definitions if we have pg_attribute
-        if let Some(ref mut attr_heap) = self.attribute_heap {
-            for (order, (col_name, col_type)) in columns.into_iter().enumerate() {
-                column_names.push(col_name.to_string());
-                schema.push(col_type);
+        {
+            let mut attr_heap_lock = self.attribute_heap.write().unwrap();
+            if let Some(ref mut attr_heap) = *attr_heap_lock {
+                for (order, (col_name, col_type)) in columns.into_iter().enumerate() {
+                    column_names.push(col_name.to_string());
+                    schema.push(col_type);
 
-                let attr_row = AttributeRow {
-                    table_id: table_info.table_id,
-                    column_info: ColumnInfo {
-                        column_name: col_name.to_string(),
-                        column_type: col_type,
-                        column_order: (order + 1) as u32,
-                    },
-                };
-                attr_heap.insert(&attr_row.serialize())?;
+                    let attr_row = AttributeRow {
+                        table_id: table_info.table_id,
+                        column_info: ColumnInfo {
+                            column_name: col_name.to_string(),
+                            column_type: col_type,
+                            column_order: (order + 1) as u32,
+                        },
+                    };
+                    attr_heap.insert(&attr_row.serialize())?;
+                }
+            } else {
+                // If pg_attribute doesn't exist, just populate without persisting
+                for (_order, (col_name, col_type)) in columns.into_iter().enumerate() {
+                    column_names.push(col_name.to_string());
+                    schema.push(col_type);
+                }
             }
         }
 
@@ -461,16 +473,14 @@ impl Catalog {
         eprintln!("DEBUG: Columns not in cache, searching pg_attribute");
 
         // If no pg_attribute table, return empty
-        let _attr_heap = match &self.attribute_heap {
-            Some(heap) => {
-                eprintln!("DEBUG: pg_attribute heap exists");
-                heap
-            }
-            None => {
+        {
+            let attr_heap_lock = self.attribute_heap.read().unwrap();
+            if attr_heap_lock.is_none() {
                 eprintln!("DEBUG: No pg_attribute heap, returning empty");
                 return Ok(vec![]);
             }
-        };
+        }
+        eprintln!("DEBUG: pg_attribute heap exists");
 
         let mut columns = Vec::new();
 
@@ -584,41 +594,50 @@ impl Catalog {
         };
 
         // Create index heap if not exists
-        if self.index_heap.is_none() {
-            // Allocate first page for index table
-            let (page_id, mut guard) = self.buffer_pool.new_page()?;
-            let _heap_page = crate::storage::page::HeapPage::new(&mut guard, page_id);
-            drop(guard);
+        {
+            let mut index_heap_lock = self.index_heap.write().unwrap();
+            if index_heap_lock.is_none() {
+                // Allocate first page for index table
+                let (page_id, mut guard) = self.buffer_pool.new_page()?;
+                let _heap_page = crate::storage::page::HeapPage::new(&mut guard, page_id);
+                drop(guard);
 
-            self.index_heap = Some(TableHeap::with_first_page(
-                self.buffer_pool.clone(),
-                CATALOG_INDEX_TABLE_ID,
-                page_id,
-            ));
+                *index_heap_lock = Some(TableHeap::with_first_page(
+                    self.buffer_pool.clone(),
+                    CATALOG_INDEX_TABLE_ID,
+                    page_id,
+                ));
 
-            // Update pg_index table's first_page_id in catalog
-            let index_table_info = TableInfo {
-                table_id: CATALOG_INDEX_TABLE_ID,
-                table_name: CATALOG_INDEX_TABLE_NAME.to_string(),
-                first_page_id: page_id,
-                schema: Some(pg_index_schema()),
-                column_names: Some(pg_index_column_names()),
-                custom_deserializer: None,
-            };
-            self.catalog_heap.insert(&index_table_info.serialize())?;
+                // Update pg_index table's first_page_id in catalog
+                let index_table_info = TableInfo {
+                    table_id: CATALOG_INDEX_TABLE_ID,
+                    table_name: CATALOG_INDEX_TABLE_NAME.to_string(),
+                    first_page_id: page_id,
+                    schema: Some(pg_index_schema()),
+                    column_names: Some(pg_index_column_names()),
+                    custom_deserializer: None,
+                };
+                {
+                    let mut catalog_heap = self.catalog_heap.write().unwrap();
+                    catalog_heap.insert(&index_table_info.serialize())?;
+                }
 
-            // Update cache
-            self.table_cache
-                .write()
-                .unwrap()
-                .insert(CATALOG_INDEX_TABLE_NAME.to_string(), index_table_info);
+                // Update cache
+                self.table_cache
+                    .write()
+                    .unwrap()
+                    .insert(CATALOG_INDEX_TABLE_NAME.to_string(), index_table_info);
+            }
         }
 
         // Insert index info into pg_index
-        if let Some(ref mut index_heap) = self.index_heap {
-            let tuple = index_info.to_tuple();
-            let serialized = crate::access::value::serialize_values(&tuple, &pg_index_schema())?;
-            index_heap.insert(&serialized)?;
+        {
+            let mut index_heap_lock = self.index_heap.write().unwrap();
+            if let Some(ref mut index_heap) = *index_heap_lock {
+                let tuple = index_info.to_tuple();
+                let serialized = crate::access::value::serialize_values(&tuple, &pg_index_schema())?;
+                index_heap.insert(&serialized)?;
+            }
         }
 
         // Update index cache
@@ -642,8 +661,11 @@ impl Catalog {
         }
 
         // Load from pg_index if not in cache
-        if self.index_heap.is_none() {
-            return Ok(Vec::new());
+        {
+            let index_heap_lock = self.index_heap.read().unwrap();
+            if index_heap_lock.is_none() {
+                return Ok(Vec::new());
+            }
         }
 
         let mut indexes = Vec::new();

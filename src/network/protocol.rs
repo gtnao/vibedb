@@ -255,6 +255,11 @@ impl ProtocolHandler {
                         tag: format!("CREATE TABLE {}", table_name),
                     });
                 }
+                QueryResult::Transaction { message } => {
+                    responses.push(Message::CommandComplete {
+                        tag: message,
+                    });
+                }
             },
             Err(e) => {
                 responses.push(create_error_response(

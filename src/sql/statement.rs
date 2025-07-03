@@ -24,6 +24,9 @@ impl StatementPlanner {
             Statement::DropTable(drop) => self.plan_drop_table(drop),
             Statement::CreateIndex(create) => self.plan_create_index(create),
             Statement::DropIndex(drop) => self.plan_drop_index(drop),
+            Statement::BeginTransaction => self.plan_begin_transaction(),
+            Statement::Commit => self.plan_commit(),
+            Statement::Rollback => self.plan_rollback(),
         }
     }
 
@@ -68,6 +71,18 @@ impl StatementPlanner {
     fn plan_drop_index(&self, drop: DropIndexStatement) -> Result<ExecutionPlan> {
         Ok(ExecutionPlan::DropIndex(DropIndexPlan { statement: drop }))
     }
+
+    fn plan_begin_transaction(&self) -> Result<ExecutionPlan> {
+        Ok(ExecutionPlan::BeginTransaction)
+    }
+
+    fn plan_commit(&self) -> Result<ExecutionPlan> {
+        Ok(ExecutionPlan::Commit)
+    }
+
+    fn plan_rollback(&self) -> Result<ExecutionPlan> {
+        Ok(ExecutionPlan::Rollback)
+    }
 }
 
 impl Default for StatementPlanner {
@@ -87,6 +102,9 @@ pub enum ExecutionPlan {
     DropTable(DropTablePlan),
     CreateIndex(CreateIndexPlan),
     DropIndex(DropIndexPlan),
+    BeginTransaction,
+    Commit,
+    Rollback,
 }
 
 #[derive(Debug, Clone)]
@@ -179,6 +197,9 @@ impl StatementValidator {
             Statement::DropTable(drop) => self.validate_drop_table(drop),
             Statement::CreateIndex(create) => self.validate_create_index(create),
             Statement::DropIndex(drop) => self.validate_drop_index(drop),
+            Statement::BeginTransaction => Ok(()), // Transaction statements are always valid
+            Statement::Commit => Ok(()),
+            Statement::Rollback => Ok(()),
         }
     }
 

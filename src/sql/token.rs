@@ -70,6 +70,13 @@ pub enum Token {
     If,
     Unique,
     Check,
+    
+    // Transaction control
+    Begin,
+    Commit,
+    Rollback,
+    Transaction,
+    Work,
 
     // Data types
     Int,
@@ -182,6 +189,11 @@ impl Token {
                 | Token::If
                 | Token::Unique
                 | Token::Check
+                | Token::Begin
+                | Token::Commit
+                | Token::Rollback
+                | Token::Transaction
+                | Token::Work
                 | Token::Int
                 | Token::Integer
                 | Token::Bigint
@@ -266,6 +278,11 @@ impl Token {
             "IF" => Some(Token::If),
             "UNIQUE" => Some(Token::Unique),
             "CHECK" => Some(Token::Check),
+            "BEGIN" => Some(Token::Begin),
+            "COMMIT" => Some(Token::Commit),
+            "ROLLBACK" => Some(Token::Rollback),
+            "TRANSACTION" => Some(Token::Transaction),
+            "WORK" => Some(Token::Work),
             "INT" => Some(Token::Int),
             "INTEGER" => Some(Token::Integer),
             "BIGINT" => Some(Token::Bigint),

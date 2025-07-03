@@ -30,6 +30,9 @@ impl Parser {
             Token::Delete => self.parse_delete(),
             Token::Create => self.parse_create(),
             Token::Drop => self.parse_drop(),
+            Token::Begin => self.parse_begin(),
+            Token::Commit => self.parse_commit(),
+            Token::Rollback => self.parse_rollback(),
             _ => bail!("Expected SQL statement"),
         }
     }
@@ -813,6 +816,42 @@ impl Parser {
             index_name,
             if_exists,
         }))
+    }
+
+    /// Parse BEGIN [TRANSACTION|WORK]
+    fn parse_begin(&mut self) -> Result<Statement> {
+        self.expect_token(Token::Begin)?;
+        
+        // Optional TRANSACTION or WORK keyword
+        if self.match_token(&Token::Transaction) || self.match_token(&Token::Work) {
+            self.advance();
+        }
+        
+        Ok(Statement::BeginTransaction)
+    }
+
+    /// Parse COMMIT [TRANSACTION|WORK]
+    fn parse_commit(&mut self) -> Result<Statement> {
+        self.expect_token(Token::Commit)?;
+        
+        // Optional TRANSACTION or WORK keyword
+        if self.match_token(&Token::Transaction) || self.match_token(&Token::Work) {
+            self.advance();
+        }
+        
+        Ok(Statement::Commit)
+    }
+
+    /// Parse ROLLBACK [TRANSACTION|WORK]
+    fn parse_rollback(&mut self) -> Result<Statement> {
+        self.expect_token(Token::Rollback)?;
+        
+        // Optional TRANSACTION or WORK keyword
+        if self.match_token(&Token::Transaction) || self.match_token(&Token::Work) {
+            self.advance();
+        }
+        
+        Ok(Statement::Rollback)
     }
 
     /// Parse expression
